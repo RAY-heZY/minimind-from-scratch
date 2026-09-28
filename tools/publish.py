@@ -67,7 +67,25 @@ def main():
     args = ap.parse_args()
 
     if not gh_ok():
-        raise SystemExit("gh 未登录。请先运行：gh auth login")
+        raise SystemExit(
+            "gh 还没登录，先做一次授权（只需做一次）：\n"
+            "\n"
+            "  1. 运行：  gh auth login\n"
+            "  2. Where do you use GitHub?                    → 直接按 Enter（选 GitHub.com）\n"
+            "  3. What is your preferred protocol ...?        → 直接按 Enter（HTTPS）\n"
+            "  4. Authenticate Git with your GitHub creds?    → 直接按 Enter（Yes）\n"
+            "  5. How would you like to authenticate ...?     → 直接按 Enter（Login with a web browser）\n"
+            "  6. 终端会显示一次性 code（形如 XXXX-XXXX）：复制它 → 按 Enter 打开浏览器\n"
+            "     → 粘贴 code → 授权。\n"
+            "  7. 看到 `Logged in as RAY-heZY` 后，重新运行本脚本。\n"
+            "\n"
+            "  ⚠️ 上面每一步都是「按 Enter 用默认值」，不要往提示框里输入命令。\n"
+            "     如果不小心输错了，按 Ctrl+C 退出重来即可。\n"
+            "\n"
+            "  不想用浏览器授权的话，改用 token：\n"
+            "     在 https://github.com/settings/tokens 建一个带 repo 权限的 token，然后\n"
+            "     echo <你的token> | gh auth login --with-token\n"
+        )
 
     full = args.repo or repo_from_config()
     if not full or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full):
