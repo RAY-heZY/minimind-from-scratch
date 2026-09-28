@@ -204,23 +204,6 @@ uv run python build_notebooks_c.py   # 第 11–15 章
 
 ---
 
-## 配套 Skill
-
-本项目已总结为一个可复用的 skill：**`guided-course-builder`**（分章引导式课程构建）。
-
-- 安装位置：`~/.workbuddy-ai/skills/guided-course-builder/`
-- 打包产物：`dist/guided-course-builder.zip`
-- 内容：
-  - `SKILL.md` —— 完整工作流（调研 → 拆章 → 双产物 → 校验 → 交付）与常见坑
-  - `references/html-animation-patterns.md` —— 动画实现规范、SVG/CSS 陷阱、页面骨架模板
-  - `references/notebook-authoring.md` —— 三段式结构规范、留白模板、生成器用法
-  - `scripts/` —— Notebook 生成器 + 三个校验脚本
-  - `assets/` —— 可复用的教学样式表与动画脚本
-
-> 下次要为**别的**主题（算法、框架、论文复现）搭同类课程时，直接复用这套结构即可。
-
----
-
 ## 致谢与许可
 
 - 模型架构、官方配图与分词器来源：[jingyaogong/minimind](https://github.com/jingyaogong/minimind)，
