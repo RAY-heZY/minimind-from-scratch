@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 05 章 · 因果自注意力与 GQA / KV Cache · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/05_attention.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 05 章 · 模型</span>
+      <h1>因果自注意力与 GQA / KV Cache</h1>
+      <p class="lead">注意力是 Transformer 的心脏：每个 token 向所有 token 提问（Query），拿回答案（Key/Value）加权求和。“因果”意味着不能偷看未来；“GQA”让推理更省显存；“KV Cache”让逐词生成不必重复计算。</p>
+      <div class="meta-row">
+        <span class="tag">缩放点积</span>
+        <span class="tag">causal mask</span>
+        <span class="tag">8 Q 头 / 4 KV 头</span>
+        <span class="tag">SDPA</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 四步走完注意力</h2>
+      <pre><code>scores = (Q @ Kᵀ) / sqrt(head_dim)      <span class="c"># 1. 打分</span>
+scores = scores + causal_mask           <span class="c"># 2. 遮住未来（上三角 = -inf）</span>
+attn   = softmax(scores, dim=-1)        <span class="c"># 3. 归一化成权重</span>
+out    = attn @ V                       <span class="c"># 4. 加权求和</span></code></pre>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：从打分到加权求和</h2>
+      <p>序列长度 6，head_dim = 4。逐帧看注意力矩阵如何被“因果遮罩”塑形。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">注意力四步分解</span></div>
+        <svg id="att" viewBox="0 0 680 330"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+          <span id="ainfo" style="margin-left:auto;font-weight:600;color:var(--primary);font-size:13.5px"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. GQA：让多个 Query 头共享一个 KV 头</h2>
+      <p>标准多头注意力里 Q、K、V 头数相同，KV 占显存大。MiniMind 用 <b>8 个 Q 头 : 4 个 KV 头</b>，
+        每 2 个 Q 头共享 1 组 KV——质量几乎不掉，KV 显存直接减半。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">示意</span><span class="t">分组查询注意力（GQA）</span></div>
+        <svg id="gqa" viewBox="0 0 680 220"></svg>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. 动画：KV Cache 增量解码</h2>
+      <p>生成第 t 个词时，前 t−1 个词的 K、V 和之前算过的一样，<b>没必要重算</b>。
+        把它们缓存起来，每步只算 1 个新 token 的 Q、K、V。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">逐词生成时缓存不断增长</span></div>
+        <svg id="kv" viewBox="0 0 680 180"></svg>
+        <div class="controls">
+          <button class="btn" id="kplay">▶ 播放</button>
+          <button class="btn ghost" id="kprev">上一步</button>
+          <button class="btn ghost" id="knext">下一步</button>
+        </div>
+      </div>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先练 <code>torch.matmul</code> 的批量矩阵乘、<code>masked_fill</code>、
+        <code>torch.softmax</code>、<code>repeat_kv</code> 的 <code>expand+reshape</code> 广播技巧，
+        再让你从零实现 <code>Attention.forward</code>，最后用 <code>F.scaled_dot_product_attention</code> 做加速版本对照。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("05");
+
+/* ============ 注意力矩阵动画 ============ */
+const N = 6, D = 4;
+// 固定随机（可复现）
+function rnd(seed) { let s = seed; return () => (s = (s * 9301 + 49297) % 233280) / 233280 - 0.5; }
+const r1 = rnd(7), r2 = rnd(23), r3 = rnd(41);
+const Q = Array.from({ length: N }, () => Array.from({ length: D }, r1));
+const K = Array.from({ length: N }, () => Array.from({ length: D }, r2));
+const Vv = Array.from({ length: N }, () => Array.from({ length: D }, r3));
+const scale = 1 / Math.sqrt(D);
+let scores = Q.map(q => K.map(k => q.reduce((s, x, i) => s + x * k[i], 0) * scale));
+let masked = scores.map((row, i) => row.map((v, j) => j <= i ? v : -Infinity));
+let attn = masked.map(row => {
+  const m = Math.max(...row.filter(isFinite));
+  const e = row.map(v => isFinite(v) ? Math.exp(v - m) : 0);
+  const s = e.reduce((a, b) => a + b, 0);
+  return e.map(v => v / s);
+});
+let out = attn.map(row => Array.from({ length: D }, (_, d) => row.reduce((s, w, j) => s + w * Vv[j][d], 0)));
+
+const svg = document.getElementById("att");
+const GX = 60, GY = 60, CELL = 34;
+function heat(v, lo, hi) {
+  const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo || 1)));
+  const c1 = [238, 242, 255], c2 = [79, 70, 229];
+  const c = c1.map((x, i) => Math.round(x + (c2[i] - x) * t));
+  return `rgb(${c.join(",")})`;
+}
+function drawGrid(rows, title, showMask, isAttn) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13.5, "font-weight": 700, fill: "#1e293b" }, svg).textContent = title;
+  const flat = rows.flat().filter(isFinite);
+  const lo = Math.min(...flat), hi = Math.max(...flat);
+  for (let i = 0; i < N; i++) {
+    svgEl("text", { x: GX - 12, y: GY + i * CELL + CELL / 2 + 4, "text-anchor": "middle", "font-size": 11, fill: "#64748b" }, svg).textContent = "q" + i;
+    for (let j = 0; j < N; j++) {
+      const v = rows[i][j];
+      const x = GX + j * CELL, y = GY + i * CELL;
+      if (!isFinite(v)) {
+        svgEl("rect", { x, y, width: CELL - 3, height: CELL - 3, rx: 5, fill: "#f1f5f9", stroke: "#e2e8f0" }, svg);
+        svgEl("text", { x: x + CELL / 2 - 2, y: y + CELL / 2 + 2, "text-anchor": "middle", "font-size": 10, fill: "#cbd5e1" }, svg).textContent = "−∞";
+      } else {
+        svgEl("rect", { x, y, width: CELL - 3, height: CELL - 3, rx: 5, fill: heat(v, lo, hi) }, svg);
+        svgEl("text", { x: x + CELL / 2 - 2, y: y + CELL / 2 + 3, "text-anchor": "middle", "font-size": 9.5, fill: isAttn && v > (hi + lo) / 2 ? "#fff" : "#334155" }, svg).textContent = fx(v, 2);
+      }
+    }
+  }
+  // 因果遮罩斜线
+  if (showMask) {
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      const x = GX + j * CELL, y = GY + i * CELL;
+      svgEl("line", { x1: x + 4, y1: y + CELL - 7, x2: x + CELL - 7, y2: y + 4, stroke: "#fca5a5", "stroke-width": 1.6 }, svg);
+    }
+  }
+  // 右侧 V 与输出
+  const RX = GX + N * CELL + 40;
+  svgEl("text", { x: RX, y: 24, "font-size": 12.5, "font-weight": 700, fill: "#0ea5e9" }, svg).textContent = "Value V";
+  for (let j = 0; j < N; j++) for (let d = 0; d < D; d++) {
+    svgEl("rect", { x: RX + d * 22, y: GY + j * CELL / 1.6, width: 19, height: 19, rx: 4, fill: "#e0f2fe", stroke: "#bae6fd" }, svg);
+    svgEl("text", { x: RX + d * 22 + 9.5, y: GY + j * CELL / 1.6 + 14, "text-anchor": "middle", "font-size": 8.5, fill: "#0369a1" }, svg).textContent = fx(Vv[j][d], 1);
+  }
+  svgEl("text", { x: RX, y: 24 + 150, "font-size": 12.5, "font-weight": 700, fill: "#4f46e5" }, svg).textContent = "输出 = attn @ V";
+  for (let i = 0; i < N; i++) for (let d = 0; d < D; d++) {
+    svgEl("rect", { x: RX + d * 22, y: GY + 160 + i * 18, width: 19, height: 16, rx: 4, fill: "#eef2ff", stroke: "#c7d2fe" }, svg);
+    svgEl("text", { x: RX + d * 22 + 9.5, y: GY + 172 + i * 18, "text-anchor": "middle", "font-size": 8, fill: "#4338ca" }, svg).textContent = fx(out[i][d], 1);
+  }
+}
+
+const STEPS = [
+  { t: "① 打分 scores = Q·Kᵀ / √d", rows: scores, mask: false, attn: false },
+  { t: "② 因果遮罩：上三角置 −∞", rows: masked, mask: true, attn: false },
+  { t: "③ softmax：每行归一化", rows: attn, mask: true, attn: true },
+];
+const player = new Player(0.9);
+player.load(STEPS);
+player.onFrame = (s) => { drawGrid(s.rows, s.t, s.mask, s.attn); document.getElementById("ainfo").textContent = s.t; };
+wireControls(player, { play: "play", prev: "prev", next: "next" });
+player.render();
+
+/* ============ GQA 示意 ============ */
+const gqa = document.getElementById("gqa");
+svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, gqa).textContent = "8 个 Query 头 → 4 个 KV 头（每 2 个 Q 头共享 1 组 KV）";
+for (let i = 0; i < 8; i++) {
+  const y = 46 + i * 20;
+  svgEl("rect", { x: 40, y, width: 74, height: 15, rx: 5, fill: "#eef2ff", stroke: "#4f46e5" }, gqa);
+  svgEl("text", { x: 77, y: y + 11, "text-anchor": "middle", "font-size": 10, fill: "#4338ca" }, gqa).textContent = "Q 头 " + i;
+  const ky = 46 + Math.floor(i / 2) * 40 + 12;
+  svgEl("line", { x1: 114, y1: y + 7.5, x2: 330, y2: ky + 7.5, stroke: "#0ea5e9", "stroke-width": 1.4, opacity: .6 }, gqa);
+}
+for (let k = 0; k < 4; k++) {
+  const y = 46 + k * 40 + 4;
+  svgEl("rect", { x: 330, y, width: 96, height: 22, rx: 6, fill: "#e0f2fe", stroke: "#0ea5e9" }, gqa);
+  svgEl("text", { x: 378, y: y + 15, "text-anchor": "middle", "font-size": 10.5, fill: "#0369a1" }, gqa).textContent = `KV 头 ${k}`;
+  svgEl("line", { x1: 426, y1: y + 11, x2: 560, y2: y + 11, stroke: "#94a3b8", "stroke-width": 1.4, class: "flowline" }, gqa);
+}
+svgEl("text", { x: 566, y: 110, "font-size": 12, fill: "#475569" }, gqa).textContent = "→ 拼接 → o_proj";
+
+/* ============ KV Cache 动画 ============ */
+const kv = document.getElementById("kv");
+let kstep = 1;
+const total = 8;
+function drawKV(t) {
+  kv.innerHTML = "";
+  svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, kv).textContent = `生成第 ${t} 个 token（序列长度 ${t + 1}）`;
+  svgEl("text", { x: 20, y: 62, "font-size": 12, fill: "#64748b" }, kv).textContent = "KV Cache：";
+  for (let i = 0; i < total; i++) {
+    const x = 110 + i * 62, y = 44;
+    const cached = i < t;
+    const isNew = i === t;
+    svgEl("rect", { x, y, width: 54, height: 34, rx: 8, fill: isNew ? "#fef3c7" : (cached ? "#e0f2fe" : "#fff"), stroke: isNew ? "#f59e0b" : (cached ? "#0ea5e9" : "#e2e8f0"), "stroke-width": isNew ? 2.5 : 1.4 }, kv);
+    svgEl("text", { x: x + 27, y: y + 22, "text-anchor": "middle", "font-size": 11, fill: "#475569" }, kv).textContent = cached || isNew ? "k,v" : "—";
+  }
+  svgEl("text", { x: 20, y: 118, "font-size": 12, fill: "#64748b" }, kv).textContent = "本步计算：";
+  svgEl("rect", { x: 110, y: 100, width: 54, height: 30, rx: 8, fill: "#fef3c7", stroke: "#f59e0b", "stroke-width": 2 }, kv);
+  svgEl("text", { x: 137, y: 120, "text-anchor": "middle", "font-size": 11, fill: "#b45309" }, kv).textContent = "1 个 token";
+  svgEl("text", { x: 180, y: 120, "font-size": 12, fill: "#475569" }, kv).textContent = `（复用前 ${t} 个已缓存的 K,V，无需重算）`;
+  svgEl("text", { x: 20, y: 156, "font-size": 12, fill: "#94a3b8" }, kv).textContent = `若无缓存，本步需重算全部 ${t + 1} 个 token；有缓存只需 1 个 → 复杂度从 O(t²) 降到 O(t)。`;
+}
+const kp = new Player(1.0);
+kp.load(Array.from({ length: total }, (_, i) => i));
+kp.onFrame = (i) => { kstep = i; drawKV(i); };
+wireControls(kp, { play: "kplay", prev: "kprev", next: "knext" });
+drawKV(1);
+</script>
+</body>
+</html>

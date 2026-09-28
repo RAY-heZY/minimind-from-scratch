@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 13 章 · DPO 直接偏好优化 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/13_dpo.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 13 章 · 训练</span>
+      <h1>DPO 直接偏好优化</h1>
+      <p class="lead">强化学习能让模型对齐人类偏好，但需要训练奖励模型、跑在线采样，复杂且不稳定。DPO 把这一整套“魔法”化简成一个<b>二分类式的损失函数</b>——只用现成的“好答案 / 坏答案”数据就能对齐。</p>
+      <div class="meta-row">
+        <span class="tag">chosen / rejected</span>
+        <span class="tag">参考模型 π_ref</span>
+        <span class="tag">β 温度</span>
+        <span class="tag">离线偏好数据</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 一个损失函数搞定</h2>
+      <pre><code>ratio_w = logπ(y_w|x) − logπ_ref(y_w|x)     <span class="c"># 好答案相对参考模型的提升</span>
+ratio_l = logπ(y_l|x) − logπ_ref(y_l|x)     <span class="c"># 坏答案的提升</span>
+
+loss = −log σ( β · (ratio_w − ratio_l) )</code></pre>
+      <p>直观理解：<b>让“好答案”相对参考模型被抬得更高，让“坏答案”被压得更低</b>。
+        σ 把差距映射成概率，取负对数就是“希望差距越大越好”。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：训练如何拉开好坏答案的差距</h2>
+      <p>拖动进度条模拟训练过程。看绿色（好答案）与红色（坏答案）的 log 概率如何被逐渐拉开，
+        以及 DPO 损失如何随之下降。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">DPO 的偏好差距</span></div>
+        <svg id="dpo" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <span class="slider">训练进度
+            <input type="range" id="pr" min="0" max="1" step="0.01" value="0" style="width:250px">
+            <b id="prv" style="color:var(--primary);width:40px;display:inline-block">0%</b>
+          </span>
+          <button class="btn ghost" id="auto">▶ 自动</button>
+          <span class="slider">β
+            <input type="range" id="beta" min="0.05" max="1" step="0.05" value="0.1" style="width:110px">
+          </span>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 参考模型的作用</div>
+        <code>π_ref</code> 是<b>冻结</b>的 SFT 模型。减掉它的 log 概率，相当于只奖励“比原来更好的变化”，
+        防止模型为了刷分而偏离语言本身（这也是 KL 正则的隐式形式）。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. DPO vs RLHF</h2>
+      <table>
+        <thead><tr><th></th><th>RLHF (PPO)</th><th>DPO</th></tr></thead>
+        <tbody>
+          <tr><td>需要奖励模型</td><td>是</td><td>否</td></tr>
+          <tr><td>需要在线采样</td><td>是</td><td>否（离线数据）</td></tr>
+          <tr><td>模型数量</td><td>4 个（actor/critic/ref/rm）</td><td>2 个（policy/ref）</td></tr>
+          <tr><td>稳定性</td><td>较难调</td><td>稳定</td></tr>
+          <tr><td>探索能力</td><td>强</td><td>受限于数据</td></tr>
+        </tbody>
+      </table>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>F.log_softmax</code> + <code>gather</code> 取“某位置某 token 的 log 概率”、
+        <code>F.logsigmoid</code>、以及用 <code>loss_mask</code> 只累加回答 token 的对数概率，
+        再留白让你实现 <code>dpo_loss</code>。难点是 <b>把逐 token 的 logprob 按 mask 求和</b>，
+        得到整条回答的 log 概率。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("13");
+
+const svg = document.getElementById("dpo");
+const sig = x => 1 / (1 + Math.exp(-x));
+const BASE = 200, MAXH = 130;
+const W_P0 = -3.4, L_P0 = -3.2;   // 初始（策略≈参考）
+const W_REF = -3.4, L_REF = -3.2;
+
+function drawDPO(p, beta) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "同一问题下两个回答的 log 概率（越靠上越高）";
+  // 训练后：好答案升，坏答案降
+  const wP = W_P0 + p * 1.9;
+  const lP = L_P0 - p * 1.7;
+  const rw = wP - W_REF, rl = lP - L_REF;
+  const margin = beta * (rw - rl);
+  const loss = -Math.log(sig(margin) + 1e-12);
+  const acc = sig(margin);
+
+  const groups = [
+    { x: 120, label: "好答案 y_w", color: "#10b981", logp: wP, ref: W_REF },
+    { x: 400, label: "坏答案 y_l", color: "#e11d48", logp: lP, ref: L_REF },
+  ];
+  groups.forEach(g => {
+    // 参考模型参考线
+    const yref = BASE - (g.ref + 4) / 6 * MAXH;
+    svgEl("line", { x1: g.x - 40, y1: yref, x2: g.x + 120, y2: yref, stroke: "#cbd5e1", "stroke-dasharray": "5 4" }, svg);
+    svgEl("text", { x: g.x + 124, y: yref + 4, "font-size": 10, fill: "#94a3b8" }, svg).textContent = "参考 π_ref";
+    // 当前策略
+    const yc = BASE - (g.logp + 4) / 6 * MAXH;
+    svgEl("line", { x1: g.x - 40, y1: yc, x2: g.x + 120, y2: yc, stroke: g.color, "stroke-width": 4, "stroke-linecap": "round" }, svg);
+    svgEl("circle", { cx: g.x + 40, cy: yc, r: 7, fill: g.color, stroke: "#fff", "stroke-width": 2 }, svg);
+    svgEl("text", { x: g.x - 44, y: yc + 4, "text-anchor": "end", "font-size": 11, "fill": g.color, "font-weight": 700 }, svg).textContent = fx(g.logp, 2);
+    svgEl("text", { x: g.x + 40, y: BASE + 26, "text-anchor": "middle", "font-size": 12.5, "font-weight": 700, fill: g.color }, svg).textContent = g.label;
+    // 相对参考的变化箭头
+    const dy = yref - yc;
+    if (Math.abs(dy) > 3) {
+      svgEl("line", { x1: g.x + 96, y1: yref, x2: g.x + 96, y2: yc, stroke: g.color, "stroke-width": 2 }, svg);
+      svgEl("text", { x: g.x + 100, y: (yref + yc) / 2 + 4, "font-size": 10, fill: g.color }, svg).textContent = (dy > 0 ? "↑" : "↓") + fx(Math.abs(g.logp - g.ref), 2);
+    }
+  });
+  svgEl("line", { x1: 40, y1: BASE, x2: 640, y2: BASE, stroke: "#e2e8f0", "stroke-width": 1.5 }, svg);
+
+  // 指标
+  svgEl("text", { x: 40, y: 252, "font-size": 12.5, fill: "#1e293b", "font-weight": 700 }, svg).textContent =
+    `偏好差距 margin = β·[(Δlogπ_w) − (Δlogπ_l)] = ${fx(margin, 3)}`;
+  svgEl("text", { x: 40, y: 274, "font-size": 12.5, fill: "#e11d48", "font-weight": 700 }, svg).textContent =
+    `DPO 损失 = −log σ(margin) = ${fx(loss, 3)}    ·    隐式偏好准确率 σ = ${(acc * 100).toFixed(1)}%`;
+}
+const pr = document.getElementById("pr"), prv = document.getElementById("prv"), be = document.getElementById("beta");
+function upd() { prv.textContent = (pr.value * 100).toFixed(0) + "%"; drawDPO(Number(pr.value), Number(be.value)); }
+pr.addEventListener("input", upd); be.addEventListener("input", upd);
+let t = null;
+document.getElementById("auto").onclick = (e) => {
+  if (t) { clearInterval(t); t = null; e.target.textContent = "▶ 自动"; return; }
+  e.target.textContent = "⏸ 停止";
+  let p = 0;
+  t = setInterval(() => { p += 0.015; if (p > 1) p = 0; pr.value = p; upd(); }, 60);
+};
+drawDPO(0, 0.1);
+</script>
+</body>
+</html>

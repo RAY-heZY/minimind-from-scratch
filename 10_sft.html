@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 10 章 · 指令微调 SFT · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/10_sft.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 10 章 · 训练</span>
+      <h1>指令微调 SFT</h1>
+      <p class="lead">预训练后的模型会“接话”，但不会“听话”。SFT 用大量「提问—回答」样本教它遵守指令格式。关键技巧只有一句话：<b>损失只算回答部分，问题部分不计分</b>。</p>
+      <div class="meta-row">
+        <span class="tag">chat template</span>
+        <span class="tag">loss mask</span>
+        <span class="tag">ignore_index = -100</span>
+        <span class="tag">多轮对话</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 为什么要有 loss mask</h2>
+      <p>如果把用户的问题也拿来算损失，模型会去“学习生成用户的问题”，这是浪费甚至有害的。
+        正确做法：把问题部分的标签设成 <code>-100</code>，交叉熵会自动忽略它们。</p>
+      <pre><code>labels = [-100, -100, ...,  回答的 token id, ...]
+loss = F.cross_entropy(logits, labels, ignore_index=-100)</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：一条样本的 loss mask 长什么样</h2>
+      <p>下面把一条「system + user + assistant」样本套进模板，逐段走过。
+        <span style="color:#10b981;font-weight:700">绿色</span> = 计入损失（assistant 的回答），
+        <span style="color:#94a3b8;font-weight:700">灰色</span> = 掩码（不计损失）。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">Chat Template + Loss Mask</span></div>
+        <svg id="sft" viewBox="0 0 680 260"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+          <span id="sinfo" style="margin-left:auto;font-size:13px;font-weight:600;color:var(--primary)"></span>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 MiniMind 的实现技巧</div>
+        它先分词出 <code>bos_id = tokenizer("&lt;|im_start|&gt;assistant\n")</code>，
+        然后扫描序列，找到每个 bos_id 的位置，从它之后开始把标签设为原文 id，
+        直到遇到 <code>eos_id</code>。这就是 <code>generate_labels</code> 的思路。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. SFT 与预训练的唯一区别</h2>
+      <table>
+        <thead><tr><th></th><th>预训练</th><th>指令微调 SFT</th></tr></thead>
+        <tbody>
+          <tr><td>数据</td><td>纯文本</td><td>多轮对话（role/content）</td></tr>
+          <tr><td>标签</td><td>整段都算 loss</td><td>只算 assistant 部分</td></tr>
+          <tr><td>特殊 token</td><td>BOS/EOS</td><td>+ <code>&lt;|im_start|&gt;</code> 等结构标记</td></tr>
+          <tr><td>目标</td><td>学会语言</td><td>学会对话、问答、工具调用</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="images/sft_loss.jpg" alt="SFT 损失曲线">
+        <figcaption>官方配图：SFT 阶段损失曲线</figcaption>
+      </figure>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>tokenizer.apply_chat_template</code>、
+        <code>list.index</code> 式的子序列匹配、<code>[-100]*len</code> 构造掩码，
+        再留白让你实现 <code>SFTDataset.generate_labels</code>。这是本章最核心的一段代码。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("10");
+
+const svg = document.getElementById("sft");
+const SEG = [
+  { t: "<|im_start|>system", loss: false, n: 1 },
+  { t: "你是MiniMind助手", loss: false, n: 3 },
+  { t: "<|im_end|>", loss: false, n: 1 },
+  { t: "<|im_start|>user", loss: false, n: 1 },
+  { t: "1+1等于几？", loss: false, n: 4 },
+  { t: "<|im_end|>", loss: false, n: 1 },
+  { t: "<|im_start|>assistant", loss: false, n: 1 },
+  { t: "1+1=2", loss: true, n: 4 },
+  { t: "<|im_end|>", loss: true, n: 1 },
+];
+// 展开为 token 级
+const TOKENS = [];
+SEG.forEach((s, si) => { for (let i = 0; i < s.n; i++) TOKENS.push({ seg: si, text: s.t, loss: s.loss }); });
+
+function drawSFT(step) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "input_ids（按 chat template 拼好后分词）";
+  const n = TOKENS.length, bw = Math.min(46, (620 - 20) / n), x0 = 24;
+  TOKENS.forEach((tk, i) => {
+    const x = x0 + i * (bw + 3);
+    const isActive = tk.seg === step;
+    const fill = tk.loss ? "#ecfdf5" : "#f8fafc";
+    const stroke = isActive ? "#f59e0b" : (tk.loss ? "#10b981" : "#cbd5e1");
+    svgEl("rect", { x, y: 46, width: bw, height: 42, rx: 6, fill, stroke, "stroke-width": isActive ? 2.6 : 1.3 }, svg);
+    // token 文字（缩写）
+    const label = tk.text.length > 4 ? tk.text.slice(0, 3) + "…" : tk.text;
+    svgEl("text", { x: x + bw / 2, y: 70, "text-anchor": "middle", "font-size": 8.5, fill: "#475569", transform: `rotate(0)` }, svg).textContent = label;
+    // loss mask 行
+    svgEl("rect", { x, y: 110, width: bw, height: 24, rx: 5, fill: tk.loss ? "#10b981" : "#e2e8f0" }, svg);
+    svgEl("text", { x: x + bw / 2, y: 127, "text-anchor": "middle", "font-size": 9, fill: tk.loss ? "#fff" : "#94a3b8", "font-weight": 700 }, svg).textContent = tk.loss ? "1" : "0";
+  });
+  svgEl("text", { x: 24, y: 106, "font-size": 11.5, fill: "#64748b" }, svg).textContent = "loss mask：";
+  svgEl("text", { x: 24, y: 156, "font-size": 11.5, fill: "#64748b" }, svg).textContent = "labels：";
+  TOKENS.forEach((tk, i) => {
+    const x = x0 + i * (bw + 3);
+    const isActive = tk.seg === step;
+    svgEl("rect", { x, y: 142, width: bw, height: 24, rx: 5, fill: isActive ? "#fef3c7" : "#fff", stroke: isActive ? "#f59e0b" : "#e2e8f0" }, svg);
+    svgEl("text", { x: x + bw / 2, y: 159, "text-anchor": "middle", "font-size": 8, fill: tk.loss ? "#059669" : "#cbd5e1" }, svg).textContent = tk.loss ? "id" : "-100";
+  });
+  // 当前段说明
+  const s = SEG[step];
+  svgEl("text", { x: 24, y: 196, "font-size": 13, "font-weight": 700, fill: s.loss ? "#059669" : "#64748b" }, svg).textContent =
+    `当前段：${s.t}  →  ${s.loss ? "计入损失 ✅" : "掩码，不计损失 ⛔"}`;
+  const counted = TOKENS.filter(t => t.loss).length;
+  svgEl("text", { x: 24, y: 220, "font-size": 11.5, fill: "#94a3b8" }, svg).textContent =
+    `本条样本共 ${n} 个 token，其中只有 ${counted} 个（assistant 的回答）参与损失计算。`;
+  document.getElementById("sinfo").textContent = s.t;
+}
+const p = new Player(1.0);
+p.load(SEG);
+p.onFrame = (i) => drawSFT(i);
+wireControls(p, { play: "play", prev: "prev", next: "next" });
+drawSFT(0);
+</script>
+</body>
+</html>

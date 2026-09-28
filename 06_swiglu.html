@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 06 章 · SwiGLU 前馈网络 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/06_swiglu.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 06 章 · 模型</span>
+      <h1>SwiGLU 前馈网络</h1>
+      <p class="lead">注意力负责“token 之间交流”，前馈网络负责“单个 token 内部加工”。SwiGLU 用一条门控分支决定哪些信息通过、哪些被抑制——比传统两层 MLP 效果更好。</p>
+      <div class="meta-row">
+        <span class="tag">gate / up / down</span>
+        <span class="tag">SiLU 门控</span>
+        <span class="tag">intermediate ≈ 8/3·d</span>
+        <span class="tag">bias = False</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 三投影 + 一个门</h2>
+      <pre><code>gate = SiLU(W_gate · x)      <span class="c"># 门控分支，决定“放行多少”</span>
+up   =        W_up   · x      <span class="c"># 内容分支，提供“要传什么”</span>
+h    = gate ⊙ up              <span class="c"># 逐元素相乘 = 门控</span>
+out  = W_down · h             <span class="c"># 降回 hidden_size</span>
+
+SiLU(x) = x · sigmoid(x)</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>2. 结构动画：数据怎么流过 FFN</h2>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">SwiGLU 数据流</span></div>
+        <svg id="ffn" viewBox="0 0 680 260"></svg>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 交互动画：门控到底“门”了什么</h2>
+      <p>拖动滑块改变输入值，观察 <code>SiLU(x)</code> 与最终门控输出 <code>SiLU(x)·x</code>。
+        注意 <b>负值被大幅压制、正值被保留并放大</b>——这就是“门”的作用。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">SiLU 门控曲线</span></div>
+        <svg id="silu" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <span class="slider">x
+            <input type="range" id="x" min="-6" max="6" step="0.1" value="2" style="width:240px">
+            <b id="xv" style="color:var(--primary);width:36px;display:inline-block">2.0</b>
+          </span>
+          <button class="btn ghost" id="cmp">切换对比：ReLU / GELU</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 为什么用 SiLU 而不是 ReLU</div>
+        ReLU 在负半轴硬性归零，梯度会“死掉”；SiLU 是<b>平滑</b>的，负值附近仍有小梯度，
+        优化更顺滑。GLU 的门控结构再叠加一层“内容选择”能力，这是 SwiGLU 优于普通 MLP 的原因。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. 尺寸为什么是 8/3·d</h2>
+      <p>传统 Transformer 的 FFN 是 <code>d → 4d → d</code>，共 2 个矩阵。
+        SwiGLU 有 3 个矩阵（gate、up、down），若仍保持参数量相同，中间维度约为 <code>8/3·d ≈ 2.67d</code>。
+        MiniMind 取 <code>ceil(d·π/64)·64</code>，768 维时得到 2432，让矩阵乘法对齐到 64 的倍数，更快。</p>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>nn.Linear(..., bias=False)</code>、<code>nn.SiLU</code>、
+        <code>ACT2FN</code> 查表与逐元素乘 <code>*</code>，再留白让你写出 <code>FeedForward</code> 的
+        <code>__init__</code> 和 <code>forward</code>。注意 gate 与 up 的维度必须一致才能相乘。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("06");
+
+/* ============ FFN 结构动画 ============ */
+const ffn = document.getElementById("ffn");
+function box(x, y, w, h, label, sub, color, fill) {
+  svgEl("rect", { x, y, width: w, height: h, rx: 10, fill: fill, stroke: color, "stroke-width": 1.8 }, ffn);
+  svgEl("text", { x: x + w / 2, y: y + (sub ? h / 2 - 2 : h / 2 + 4), "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: color }, ffn).textContent = label;
+  if (sub) svgEl("text", { x: x + w / 2, y: y + h / 2 + 14, "text-anchor": "middle", "font-size": 10, fill: "#64748b" }, ffn).textContent = sub;
+}
+function arrow(x1, y1, x2, y2, color) {
+  svgEl("line", { x1, y1, x2, y2, stroke: color, "stroke-width": 2, class: "flowline", "marker-end": "" }, ffn);
+}
+// x
+box(20, 100, 78, 52, "x", "hidden=768", "#4f46e5", "#eef2ff");
+// gate branch
+box(150, 40, 118, 50, "W_gate · x", "", "#8b5cf6", "#f5f3ff");
+box(300, 40, 118, 50, "SiLU( )", "门控分支", "#8b5cf6", "#f5f3ff");
+// up branch
+box(150, 168, 118, 50, "W_up · x", "", "#0ea5e9", "#e0f2fe");
+// multiply
+box(300, 168, 118, 50, "⊙ 逐元素乘", "gate ⊙ up", "#10b981", "#ecfdf5");
+// down
+box(460, 100, 118, 52, "W_down", "→ hidden=768", "#f59e0b", "#fffbeb");
+svgEl("text", { x: 604, y: 130, "font-size": 13, "font-weight": 700, fill: "#b45309" }, ffn).textContent = "out";
+arrow(98, 112, 150, 65, "#c7d2fe");
+arrow(98, 140, 150, 190, "#bae6fd");
+arrow(268, 65, 300, 65, "#c4b5fd");
+arrow(268, 193, 300, 193, "#6ee7b7");
+arrow(359, 90, 359, 168, "#a7f3d0");
+arrow(418, 193, 460, 150, "#fcd34d");
+arrow(418, 65, 470, 100, "#ddd6fe");
+svgEl("text", { x: 340, y: 245, "text-anchor": "middle", "font-size": 11.5, fill: "#94a3b8" }, ffn).textContent = "intermediate_size ≈ ceil(768·π/64)·64 = 2432";
+
+/* ============ SiLU 曲线 ============ */
+const svg = document.getElementById("silu");
+const W = 680, H = 300, PADL = 60, PADB = 240, PADT = 30, PADR = 620;
+const xmin = -6, xmax = 6, ymin = -2.5, ymax = 6.5;
+const X = v => PADL + (v - xmin) / (xmax - xmin) * (PADR - PADL);
+const Y = v => PADB - (v - ymin) / (ymax - ymin) * (PADB - PADT);
+const silu = x => x / (1 + Math.exp(-x));
+const relu = x => Math.max(0, x);
+const gelu = x => 0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
+const gsilu = x => silu(x) * x;
+
+let showCmp = false;
+const gCurve = svgEl("g", {}, svg);
+const gDyn = svgEl("g", {}, svg);
+
+function base() {
+  svgEl("line", { x1: PADL, y1: Y(0), x2: PADR, y2: Y(0), stroke: "#e2e8f0" }, svg);
+  svgEl("line", { x1: X(0), y1: PADT, x2: X(0), y2: PADB, stroke: "#e2e8f0" }, svg);
+  for (let v = -6; v <= 6; v += 2) svgEl("text", { x: X(v), y: PADB + 16, "text-anchor": "middle", "font-size": 10, fill: "#94a3b8" }, svg).textContent = v;
+  svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "SiLU(x) = x·sigmoid(x) 与门控输出 SiLU(x)·x";
+}
+function curve(fn, color, dash, width) {
+  let d = "";
+  for (let px = PADL; px <= PADR; px += 3) {
+    const xv = xmin + (px - PADL) / (PADR - PADL) * (xmax - xmin);
+    d += (d ? " L " : "M ") + px + " " + Y(fn(xv));
+  }
+  svgEl("path", { d, fill: "none", stroke: color, "stroke-width": width || 2.6, "stroke-dasharray": dash || "none" }, gCurve);
+}
+function legend(x, y, color, text, dash) {
+  svgEl("line", { x1: x, y1: y, x2: x + 24, y2: y, stroke: color, "stroke-width": 3, "stroke-dasharray": dash || "none" }, svg);
+  svgEl("text", { x: x + 30, y: y + 4, "font-size": 12, fill: "#475569" }, svg).textContent = text;
+}
+function drawAll(xv) {
+  gCurve.innerHTML = ""; gDyn.innerHTML = "";
+  curve(silu, "#4f46e5");
+  curve(gsilu, "#10b981");
+  if (showCmp) { curve(relu, "#e11d48", "5 4", 1.8); curve(gelu, "#f59e0b", "5 4", 1.8); }
+  legend(430, 50, "#4f46e5", "SiLU(x)");
+  legend(430, 72, "#10b981", "SiLU(x)·x（门控输出）");
+  if (showCmp) { legend(430, 94, "#e11d48", "ReLU", "5 4"); legend(430, 116, "#f59e0b", "GELU", "5 4"); }
+  // 当前点
+  const gx = X(xv), gy1 = Y(silu(xv)), gy2 = Y(gsilu(xv));
+  svgEl("line", { x1: gx, y1: PADT, x2: gx, y2: PADB, stroke: "#cbd5e1", "stroke-dasharray": "3 4" }, gDyn);
+  svgEl("circle", { cx: gx, cy: gy1, r: 6, fill: "#4f46e5", stroke: "#fff", "stroke-width": 2 }, gDyn);
+  svgEl("circle", { cx: gx, cy: gy2, r: 6, fill: "#10b981", stroke: "#fff", "stroke-width": 2 }, gDyn);
+  svgEl("text", { x: gx + 10, y: gy1 - 8, "font-size": 11.5, fill: "#4f46e5", "font-weight": 700 }, gDyn).textContent = `SiLU=${fx(silu(xv), 2)}`;
+  svgEl("text", { x: gx + 10, y: gy2 + 18, "font-size": 11.5, fill: "#10b981", "font-weight": 700 }, gDyn).textContent = `输出=${fx(gsilu(xv), 2)}`;
+  svgEl("text", { x: 60, y: 282, "font-size": 12.5, fill: "#475569" }, gDyn).textContent =
+    xv < 0 ? "x < 0：门控值很小 → 这条信息基本被“关掉”" : "x > 0：门控值接近 1 → 信息被“放行”并保留";
+}
+base();
+const xS = document.getElementById("x"), xvE = document.getElementById("xv");
+xS.addEventListener("input", () => { xvE.textContent = fx(xS.value, 1); drawAll(Number(xS.value)); });
+document.getElementById("cmp").onclick = () => { showCmp = !showCmp; drawAll(Number(xS.value)); };
+drawAll(2);
+</script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 03 章 · RMSNorm 均方根归一化 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/03_rmsnorm.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 03 章 · 模型</span>
+      <h1>RMSNorm 均方根归一化</h1>
+      <p class="lead">深度网络里，激活值的尺度会层层漂移。归一化把每层的数值“拉回”同一量级，让训练稳定。RMSNorm 是 LayerNorm 的极简版本——只除均方根，不减均值、不学偏置。</p>
+      <div class="meta-row">
+        <span class="tag">Pre-Norm</span>
+        <span class="tag">eps = 1e-6</span>
+        <span class="tag">可学习权重 γ</span>
+        <span class="tag">尺度不变性</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 公式只有一行</h2>
+      <pre><code>RMS(x) = sqrt( mean(x²) + eps )
+RMSNorm(x) = γ ⊙ x / RMS(x)
+
+<span class="c"># 对比 LayerNorm：</span>
+LayerNorm(x) = γ ⊙ (x - μ) / sqrt(σ² + eps) + β</code></pre>
+      <p>LayerNorm 要减均值、算方差、还要偏置 β；RMSNorm 只保留“按能量缩放”这一件事。
+        实测效果几乎一样，但<b>少一次减均值和一次求方差，更快</b>。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：归一化是怎么把尺度拉平的</h2>
+      <p>拖动下面的滑块改变输入向量的整体缩放系数 <code>k</code>。注意看——
+        无论输入被放大还是缩小多少倍，<b>归一化后的结果始终不变</b>，只有乘以权重 γ 之后才有差异。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">RMSNorm 四步分解</span></div>
+        <svg id="rms" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <span class="slider">输入缩放 k
+            <input type="range" id="k" min="0.2" max="4" step="0.1" value="1" style="width:220px">
+            <b id="kv" style="color:var(--primary);width:34px;display:inline-block">1.0</b>
+          </span>
+          <button class="btn ghost" id="auto">▶ 自动扫描</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 尺度不变性</div>
+        <code>RMSNorm(k·x) = RMSNorm(x)</code>。正因为这个性质，前向传播中即使某层激活值突然放大 10 倍，
+        归一化也会把它拉回原尺度——这正是深层 Transformer 能稳定训练的关键。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 代码骨架</h2>
+      <pre><code><span class="k">class</span> <span class="f">RMSNorm</span>(nn.Module):
+    <span class="k">def</span> <span class="f">__init__</span>(self, dim, eps=<span class="n">1e-6</span>):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))   <span class="c"># γ，初始为 1</span>
+
+    <span class="k">def</span> <span class="f">forward</span>(self, x):
+        <span class="c"># 1) 算均方根   2) 除   3) 乘 γ</span>
+        ...</code></pre>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里会先带你认识 <code>torch.rsqrt</code>、<code>x.pow(2).mean(-1)</code>、<code>keepdim=True</code> 和
+        <code>nn.Parameter</code>，然后留白让你写出完整的 <code>RMSNorm</code>。注意 <code>keepdim=True</code> 不能漏，
+        否则广播维度会错。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("03");
+
+const V = [2.0, -1.0, 3.0, -0.5, 1.5, -2.5, 0.8, -1.2];
+const G = [1.2, 0.8, 1.0, 1.1, 0.9, 1.3, 1.0, 0.95];
+const EPS = 1e-6;
+const svg = document.getElementById("rms");
+
+const ROWS = [
+  { label: "① 输入 x",      key: "x",  color: "#94a3b8" },
+  { label: "② x²",          key: "x2", color: "#f59e0b" },
+  { label: "③ 归一化 x/RMS", key: "xn", color: "#0ea5e9" },
+  { label: "④ γ ⊙ x/RMS",   key: "y",  color: "#4f46e5" },
+];
+const LABEL_X = 8, CHART_X = 150, CHART_W = 500, ZERO = CHART_X + CHART_W / 2;
+const ROW_H = 62, TOP = 20;
+
+function rms(v) { let s = 0; for (const t of v) s += t * t; return Math.sqrt(s / v.length + EPS); }
+
+function draw(k) {
+  const x = V.map(v => v * k);
+  const r = rms(x);
+  const xn = x.map(v => v / r);
+  const y = xn.map((v, i) => v * G[i]);
+  const data = { x, x2: x.map(v => v * v), xn, y };
+  const scale = 62 / Math.max(1, ...x.map(Math.abs), ...y.map(Math.abs));
+
+  svg.innerHTML = "";
+  ROWS.forEach((row, ri) => {
+    const yBase = TOP + ri * ROW_H + 40;
+    svgEl("text", { x: LABEL_X, y: yBase - 34, "font-size": 12.5, "font-weight": 700, fill: row.color }, svg).textContent = row.label;
+    // 零线
+    svgEl("line", { x1: CHART_X, y1: yBase, x2: CHART_X + CHART_W, y2: yBase, stroke: "#e2e8f0", "stroke-width": 1 }, svg);
+    const vals = data[row.key];
+    const bw = CHART_W / vals.length - 8;
+    vals.forEach((v, i) => {
+      const bx = CHART_X + i * (bw + 8) + 4;
+      const h = Math.abs(v) * scale;
+      const rect = svgEl("rect", { x: bx, width: bw, rx: 4, fill: row.color, opacity: .85 }, svg);
+      rect.style.transition = "all .35s ease";
+      if (v >= 0) { rect.setAttribute("y", yBase - h); rect.setAttribute("height", h); }
+      else { rect.setAttribute("y", yBase); rect.setAttribute("height", h); }
+      const tx = svgEl("text", { x: bx + bw / 2, y: v >= 0 ? yBase - h - 4 : yBase + h + 12, "text-anchor": "middle", "font-size": 9.5, fill: "#64748b" }, svg);
+      tx.style.transition = "all .35s ease";
+      tx.textContent = fx(v, 2);
+    });
+  });
+  svgEl("text", { x: 340, y: 292, "text-anchor": "middle", "font-size": 12.5, fill: "#475569" }, svg)
+    .textContent = `RMS(x) = ${fx(r, 4)}   ·   输入整体缩放 k = ${fx(k, 1)}   ·   归一化结果与 k 无关`;
+}
+
+const slider = document.getElementById("k");
+const kv = document.getElementById("kv");
+slider.addEventListener("input", () => { kv.textContent = fx(slider.value, 1); draw(Number(slider.value)); });
+draw(1);
+
+let autoTimer = null;
+document.getElementById("auto").onclick = (e) => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent = "▶ 自动扫描"; return; }
+  e.target.textContent = "⏸ 停止";
+  let k = 0.2;
+  autoTimer = setInterval(() => {
+    k += 0.12; if (k > 4) k = 0.2;
+    slider.value = k; kv.textContent = fx(k, 1); draw(k);
+  }, 90);
+};
+</script>
+</body>
+</html>

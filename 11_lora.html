@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 11 章 · LoRA 低秩适配 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/11_lora.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 11 章 · 训练</span>
+      <h1>LoRA 低秩适配</h1>
+      <p class="lead">想给模型加一项新技能，不必重训全部参数。LoRA 冻结原权重，只在旁边挂一条“低秩小分支”，只训练这条分支——参数量能降到原来的 1% 以下。</p>
+      <div class="meta-row">
+        <span class="tag">冻结底座</span>
+        <span class="tag">rank = 16</span>
+        <span class="tag">B·A 增量</span>
+        <span class="tag">可合并</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 一句话讲完 LoRA</h2>
+      <pre><code>h = W·x  +  (α/r) · B·A·x
+      ↑            ↑
+   冻结不变      只训练这两个小矩阵
+
+A: (in_features, r)     高斯初始化
+B: (r, out_features)    零初始化 → 初始时 B·A = 0，不破坏原模型</code></pre>
+      <p>为什么有效？因为微调时权重的<b>变化量 ΔW 本身就是低秩的</b>。
+        用一个 <code>d×r</code> 加一个 <code>r×d</code> 的小矩阵（r 远小于 d）就足够表达这个变化。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：前向传播与合并</h2>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">LoRA 分支与权重合并</span></div>
+        <svg id="lora" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放合并</button>
+          <button class="btn ghost" id="reset">重置</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 交互动画：能省多少参数</h2>
+      <p>以 MiniMind 的 <code>hidden = 768</code> 为例。拖动 rank，对比全参数微调与 LoRA 的参数量。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">参数量对比</span></div>
+        <svg id="cmp" viewBox="0 0 680 200"></svg>
+        <div class="controls">
+          <span class="slider">rank r
+            <input type="range" id="r" min="1" max="64" step="1" value="16" style="width:240px">
+            <b id="rv" style="color:var(--primary);width:30px;display:inline-block">16</b>
+          </span>
+        </div>
+      </div>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>nn.Linear</code> 的 <code>in_features/out_features</code>、
+        <code>setattr</code> 动态挂模块、<code>types.MethodType</code> 式的 forward 替换，
+        再留白让你实现 <code>LoRA</code> 类与 <code>apply_lora</code>。
+        合并时注意 <code>B.weight @ A.weight</code> 的维度顺序，以及把结果加回原权重。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("11");
+
+/* ===== LoRA 结构 + 合并动画 ===== */
+const svg = document.getElementById("lora");
+let merged = false;
+function drawLora(m) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "LoRA 前向：h = W·x + (α/r)·B·A·x";
+  // x
+  svgEl("rect", { x: 20, y: 120, width: 60, height: 46, rx: 9, fill: "#f8fafc", stroke: "#94a3b8", "stroke-width": 1.6 }, svg);
+  svgEl("text", { x: 50, y: 148, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "#475569" }, svg).textContent = "x";
+  // W 冻结
+  svgEl("rect", { x: 140, y: 74, width: 130, height: 58, rx: 10, fill: merged ? "#eef2ff" : "#f1f5f9", stroke: "#4f46e5", "stroke-width": 2, "stroke-dasharray": merged ? "none" : "0" }, svg);
+  svgEl("text", { x: 205, y: 100, "text-anchor": "middle", "font-size": 12.5, "font-weight": 700, fill: "#4f46e5" }, svg).textContent = "W (768×768)";
+  svgEl("text", { x: 205, y: 118, "text-anchor": "middle", "font-size": 10.5, fill: merged ? "#059669" : "#94a3b8" }, svg).textContent = merged ? "已合并 W' = W + BA" : "🔒 冻结，不更新";
+  // LoRA branch
+  const op = merged ? 0.28 : 1;
+  svgEl("g", { opacity: op }, svg);
+  const g = svgEl("g", { opacity: op }, svg);
+  svgEl("rect", { x: 140, y: 190, width: 96, height: 46, rx: 9, fill: "#f5f3ff", stroke: "#8b5cf6", "stroke-width": 1.8 }, g);
+  svgEl("text", { x: 188, y: 210, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "#6d28d9" }, g).textContent = "A (768×16)";
+  svgEl("text", { x: 188, y: 226, "text-anchor": "middle", "font-size": 9, fill: "#8b5cf6" }, g).textContent = "训练";
+  svgEl("rect", { x: 262, y: 190, width: 96, height: 46, rx: 9, fill: "#f5f3ff", stroke: "#8b5cf6", "stroke-width": 1.8 }, g);
+  svgEl("text", { x: 310, y: 210, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "#6d28d9" }, g).textContent = "B (16×768)";
+  svgEl("text", { x: 310, y: 226, "text-anchor": "middle", "font-size": 9, fill: "#8b5cf6" }, g).textContent = "训练";
+  svgEl("line", { x1: 236, y1: 213, x2: 262, y2: 213, stroke: "#8b5cf6", "stroke-width": 2, class: merged ? "" : "flowline" }, g);
+  // 加法
+  svgEl("circle", { cx: 400, cy: 135, r: 18, fill: merged ? "#eef2ff" : "#ecfdf5", stroke: "#10b981", "stroke-width": 2 }, svg);
+  svgEl("text", { x: 400, y: 142, "text-anchor": "middle", "font-size": 18, "font-weight": 700, fill: "#10b981" }, svg).textContent = "+";
+  // 输出
+  svgEl("rect", { x: 470, y: 112, width: 90, height: 46, rx: 9, fill: "#e0f2fe", stroke: "#0ea5e9", "stroke-width": 1.8 }, svg);
+  svgEl("text", { x: 515, y: 140, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "#0369a1" }, svg).textContent = "h";
+  // 连线
+  svgEl("line", { x1: 80, y1: 143, x2: 140, y2: 120, stroke: "#94a3b8", "stroke-width": 1.8 }, svg);
+  svgEl("line", { x1: 80, y1: 143, x2: 140, y2: 200, stroke: "#c4b5fd", "stroke-width": 1.8 }, svg);
+  svgEl("line", { x1: 270, y1: 103, x2: 382, y2: 128, stroke: "#a5b4fc", "stroke-width": 2, class: merged ? "" : "flowline" }, svg);
+  svgEl("line", { x1: 358, y1: 213, x2: 392, y2: 150, stroke: "#c4b5fd", "stroke-width": 2, class: merged ? "" : "flowline" }, svg);
+  svgEl("line", { x1: 418, y1: 135, x2: 470, y2: 135, stroke: "#0ea5e9", "stroke-width": 2, class: "flowline" }, svg);
+  svgEl("text", { x: 340, y: 278, "text-anchor": "middle", "font-size": 12.5, "fill": "#475569" }, svg).textContent =
+    merged ? "合并完成：推理时 B·A 已加进 W，不再有额外计算开销 ✅" : "训练时只有 A、B 需要梯度；W 始终冻结 🔒";
+}
+let timer = null;
+document.getElementById("play").onclick = () => {
+  merged = true; drawLora(true);
+};
+document.getElementById("reset").onclick = () => { merged = false; drawLora(false); };
+drawLora(false);
+
+/* ===== 参数量对比 ===== */
+const cmp = document.getElementById("cmp");
+const D = 768;
+function drawCmp(r) {
+  cmp.innerHTML = "";
+  const full = D * D, lora = 2 * D * r;
+  const ratio = lora / full;
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, cmp).textContent = "单个 768×768 线性层：全参数微调 vs LoRA";
+  const maxW = 520;
+  // full bar
+  svgEl("text", { x: 20, y: 70, "font-size": 12, fill: "#475569" }, cmp).textContent = "全参数";
+  svgEl("rect", { x: 100, y: 56, width: maxW, height: 24, rx: 6, fill: "#eef2ff", stroke: "#4f46e5" }, cmp);
+  svgEl("text", { x: 108, y: 73, "font-size": 11.5, fill: "#4338ca", "font-weight": 700 }, cmp).textContent = `${full.toLocaleString()} 参数`;
+  // lora bar
+  svgEl("text", { x: 20, y: 112, "font-size": 12, fill: "#475569" }, cmp).textContent = "LoRA";
+  svgEl("rect", { x: 100, y: 98, width: Math.max(6, maxW * ratio), height: 24, rx: 6, fill: "#ecfdf5", stroke: "#10b981" }, cmp);
+  svgEl("text", { x: 108 + Math.max(6, maxW * ratio), y: 115, "font-size": 11.5, fill: "#059669", "font-weight": 700 }, cmp).textContent = `${lora.toLocaleString()} 参数`;
+  svgEl("text", { x: 20, y: 158, "font-size": 13, fill: "#1e293b", "font-weight": 700 }, cmp).textContent =
+    `rank r = ${r}  →  参数量仅为全参数的 ${(ratio * 100).toFixed(2)}%（约 1/${Math.round(1 / ratio)}）`;
+  svgEl("text", { x: 20, y: 180, "font-size": 11.5, fill: "#94a3b8" }, cmp).textContent =
+    "整个模型有几十个这样的层，LoRA 把它们全部加起来依然远小于底座参数量。";
+}
+const rS = document.getElementById("r"), rv = document.getElementById("rv");
+rS.addEventListener("input", () => { rv.textContent = rS.value; drawCmp(Number(rS.value)); });
+drawCmp(16);
+</script>
+</body>
+</html>

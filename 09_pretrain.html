@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 09 章 · 预训练 Pretrain · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/09_pretrain.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 09 章 · 训练</span>
+      <h1>预训练 Pretrain</h1>
+      <p class="lead">预训练就是让模型在几十亿 token 上反复做“完形填空”：给定前面的词，预测下一个词。任务极简，但正是它让模型吸收了语言的全部规律。</p>
+      <div class="meta-row">
+        <span class="tag">下一词预测</span>
+        <span class="tag">AdamW</span>
+        <span class="tag">梯度累积</span>
+        <span class="tag">bfloat16</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 训练循环的五个动作</h2>
+      <pre><code>for input_ids, labels in loader:
+    with autocast():                     <span class="c"># 1. 混合精度前向</span>
+        res = model(input_ids, labels=labels)
+        loss = (res.loss + res.aux_loss) / accumulation_steps
+    scaler.scale(loss).backward()        <span class="c"># 2. 反向传播</span>
+    scaler.unscale_(optimizer)
+    clip_grad_norm_(model.parameters(), 1.0)   <span class="c"># 3. 梯度裁剪</span>
+    scaler.step(optimizer); scaler.update()    <span class="c"># 4. 更新参数</span>
+    optimizer.zero_grad(set_to_none=True)      <span class="c"># 5. 清空梯度</span></code></pre>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：一轮训练在做什么</h2>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">前向 → 损失 → 反向 → 更新</span></div>
+        <svg id="loop" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 动画：学习率余弦衰减</h2>
+      <p>MiniMind 的学习率不是恒定的。它从 <code>lr</code> 开始，按余弦曲线平滑降到 <code>0.1·lr</code>：</p>
+      <pre><code>lr_t = lr · ( 0.1 + 0.45 · (1 + cos(π · step / total)) )</code></pre>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">余弦学习率调度</span></div>
+        <svg id="lrc" viewBox="0 0 680 240"></svg>
+        <div class="controls">
+          <span class="slider">训练进度
+            <input type="range" id="prog" min="0" max="100" step="1" value="0" style="width:260px">
+            <b id="pv" style="color:var(--primary);width:46px;display:inline-block">0%</b>
+          </span>
+          <button class="btn ghost" id="autoplay">▶ 自动</button>
+        </div>
+      </div>
+      <figure>
+        <img src="images/pretrain_loss.jpg" alt="MiniMind 预训练损失曲线">
+        <figcaption>官方配图：MiniMind 预训练损失曲线（loss 稳定下降即训练正常）</figcaption>
+      </figure>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>optim.AdamW</code>、<code>GradScaler</code>、
+        <code>torch.nn.utils.clip_grad_norm_</code>、<code>torch.cuda.amp.autocast</code>，
+        再留白让你写出完整的 <code>train_epoch</code> 训练循环。注意：<b>梯度累积</b>时 loss 要先除以累积步数再 backward。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("09");
+
+/* ===== 训练循环动画 ===== */
+const svg = document.getElementById("loop");
+const CX = 340, CY = 150, R = 92;
+const STEPS = [
+  { t: "① 前向 forward", d: "input_ids → logits，算交叉熵 loss", c: "#4f46e5" },
+  { t: "② 反向 backward", d: "loss.backward() 求每个参数的梯度", c: "#0ea5e9" },
+  { t: "③ 梯度裁剪", d: "clip_grad_norm_ 限制梯度范数，防爆炸", c: "#f59e0b" },
+  { t: "④ 更新参数", d: "optimizer.step() 沿梯度反方向走一步", c: "#10b981" },
+  { t: "⑤ 清空梯度", d: "zero_grad(set_to_none=True) 准备下一轮", c: "#8b5cf6" },
+];
+function drawLoop(step) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "训练循环";
+  // 环形
+  STEPS.forEach((s, i) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / STEPS.length;
+    const x = CX + R * Math.cos(a), y = CY + R * Math.sin(a);
+    const active = i === step;
+    svgEl("circle", { cx: x, cy: y, r: active ? 30 : 26, fill: active ? "#fef3c7" : "#fff", stroke: active ? "#f59e0b" : s.c, "stroke-width": active ? 3 : 1.8 }, svg);
+    svgEl("text", { x, y: y + 4, "text-anchor": "middle", "font-size": 16, "font-weight": 700, fill: s.c }, svg).textContent = i + 1;
+    // 环上箭头
+    const a2 = a + 2 * Math.PI / STEPS.length * 0.5;
+    const x2 = CX + (R + 26) * Math.cos(a2), y2 = CY + (R + 26) * Math.sin(a2);
+    svgEl("text", { x: x2, y: y2 + 4, "text-anchor": "middle", "font-size": 14, fill: "#cbd5e1" }, svg).textContent = "↻";
+  });
+  const s = STEPS[step];
+  svgEl("text", { x: CX, y: CY - 6, "text-anchor": "middle", "font-size": 13.5, "font-weight": 700, fill: s.c }, svg).textContent = s.t;
+  svgEl("text", { x: CX, y: CY + 16, "text-anchor": "middle", "font-size": 10.5, fill: "#64748b" }, svg).textContent = s.d.split("，")[0];
+  svgEl("text", { x: 340, y: 290, "text-anchor": "middle", "font-size": 12, fill: "#475569" }, svg).textContent = s.d;
+}
+const lp = new Player(1.2);
+lp.load(STEPS);
+lp.onFrame = (i) => drawLoop(i);
+wireControls(lp, { play: "play", prev: "prev", next: "next" });
+drawLoop(0);
+
+/* ===== 学习率曲线 ===== */
+const lc = document.getElementById("lrc");
+const W = 680, PL = 70, PR = 620, PT = 30, PB = 190;
+const lrOf = p => 0.1 + 0.45 * (1 + Math.cos(Math.PI * p));   // 归一化到 lr 的倍数
+const Xp = p => PL + p * (PR - PL);
+const Yp = v => PB - (v - 0.08) / (1.02 - 0.08) * (PB - PT);
+function drawLR(p) {
+  lc.innerHTML = "";
+  svgEl("line", { x1: PL, y1: PB, x2: PR, y2: PB, stroke: "#e2e8f0" }, lc);
+  svgEl("line", { x1: PL, y1: PT, x2: PL, y2: PB, stroke: "#e2e8f0" }, lc);
+  svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, lc).textContent = "学习率随训练进度变化";
+  svgEl("text", { x: PL - 8, y: Yp(1) + 4, "text-anchor": "end", "font-size": 10.5, fill: "#64748b" }, lc).textContent = "lr";
+  svgEl("text", { x: PL - 8, y: Yp(0.1) + 4, "text-anchor": "end", "font-size": 10.5, fill: "#64748b" }, lc).textContent = "0.1·lr";
+  svgEl("text", { x: PR, y: PB + 18, "text-anchor": "end", "font-size": 10.5, fill: "#64748b" }, lc).textContent = "训练结束";
+  svgEl("text", { x: PL, y: PB + 18, "text-anchor": "start", "font-size": 10.5, fill: "#64748b" }, lc).textContent = "开始";
+  let d = "";
+  for (let i = 0; i <= 100; i++) d += (i ? " L " : "M ") + Xp(i / 100) + " " + Yp(lrOf(i / 100));
+  svgEl("path", { d, fill: "none", stroke: "#4f46e5", "stroke-width": 3 }, lc);
+  // 填充
+  svgEl("path", { d: d + ` L ${Xp(1)} ${PB} L ${Xp(0)} ${PB} Z`, fill: "#4f46e5", opacity: .07 }, lc);
+  const cx = Xp(p), cy = Yp(lrOf(p));
+  svgEl("line", { x1: cx, y1: PT, x2: cx, y2: PB, stroke: "#cbd5e1", "stroke-dasharray": "3 4" }, lc);
+  svgEl("circle", { cx, cy, r: 7, fill: "#e11d48", stroke: "#fff", "stroke-width": 2 }, lc);
+  svgEl("text", { x: cx + 12, y: cy - 10, "font-size": 12.5, "font-weight": 700, fill: "#e11d48" }, lc).textContent = `lr_t = ${fx(lrOf(p), 3)}·lr`;
+  svgEl("text", { x: 340, y: 228, "text-anchor": "middle", "font-size": 12, fill: "#475569" }, lc).textContent = `进度 ${(p * 100).toFixed(0)}%  →  学习率降为初始值的 ${(lrOf(p) * 100).toFixed(0)}%`;
+}
+const prog = document.getElementById("prog"), pv = document.getElementById("pv");
+prog.addEventListener("input", () => { pv.textContent = prog.value + "%"; drawLR(Number(prog.value) / 100); });
+let t = null;
+document.getElementById("autoplay").onclick = (e) => {
+  if (t) { clearInterval(t); t = null; e.target.textContent = "▶ 自动"; return; }
+  e.target.textContent = "⏸ 停止";
+  let p = 0;
+  t = setInterval(() => { p += 0.01; if (p > 1) p = 0; prog.value = p * 100; pv.textContent = (p * 100).toFixed(0) + "%"; drawLR(p); }, 60);
+};
+drawLR(0);
+</script>
+</body>
+</html>

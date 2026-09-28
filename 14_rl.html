@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 14 章 · 强化学习 GRPO / PPO / CISPO · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/14_rl.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 14 章 · 训练</span>
+      <h1>强化学习 GRPO / PPO / CISPO</h1>
+      <p class="lead">DPO 只能被动地学现成数据。强化学习则让模型<b>自己生成、自己评分、自己改进</b>。MiniMind 把 DPO、PPO、GRPO、CISPO 统一成一个公式：<b>策略项 × 优势项 × 正则项</b>。</p>
+      <div class="meta-row">
+        <span class="tag">采样 rollout</span>
+        <span class="tag">优势估计</span>
+        <span class="tag">KL 正则</span>
+        <span class="tag">clip 裁剪</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 一个公式看穿所有 PO 算法</h2>
+      <pre><code>J = E[ Φ(r_t, A_t) ]  −  β · KL(π ‖ π_ref)
+      └── 策略项 ──┘        └── 正则项 ──┘
+                    ↑
+              优势项 A_t：这一步比平均好多少</code></pre>
+      <table>
+        <thead><tr><th>算法</th><th>策略项 Φ</th><th>优势 A_t</th><th>模型数</th></tr></thead>
+        <tbody>
+          <tr><td>DPO</td><td>log r_w − log r_l</td><td>隐式</td><td>1（2 次前向）</td></tr>
+          <tr><td>PPO</td><td>min(r·A, clip(r)·A)</td><td>Critic / GAE</td><td>2（actor+critic）</td></tr>
+          <tr><td>GRPO</td><td>min(r·A, clip(r)·A)</td><td>(R−μ)/σ</td><td>1</td></tr>
+          <tr><td>CISPO</td><td>clip(r)·A·logπ</td><td>(R−μ)/σ</td><td>1</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：GRPO 怎么从一组回答里算出优势</h2>
+      <p>GRPO 最巧妙的地方：<b>不需要 Critic</b>。对同一个问题采样一组回答，用组内奖励的均值/标准差做归一化，
+        就得到了优势。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">组内归一化 → 优势</span></div>
+        <svg id="grpo" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 为什么要除以标准差</div>
+        <code>A = (R − μ) / σ</code>。如果一组回答分数都很接近（σ 很小），说明这道题太简单或太难，
+        梯度会被放大而变得不稳定——这也叫“退化组”问题。归一化让优势始终在可比较的尺度上。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 动画：PPO 的 clip 到底裁了什么</h2>
+      <p>概率比 <code>r = π_new/π_old</code> 表示“新策略比旧策略更倾向这个动作多少倍”。
+        如果更新太猛（r 偏离 1 太远），clip 会把梯度“掐断”，防止策略崩掉。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">PPO 裁剪目标</span></div>
+        <svg id="clip" viewBox="0 0 680 260"></svg>
+        <div class="controls">
+          <span class="slider">ε
+            <input type="range" id="eps" min="0.05" max="0.4" step="0.01" value="0.2" style="width:200px">
+            <b id="epsv" style="color:var(--primary);width:34px;display:inline-block">0.20</b>
+          </span>
+          <span class="slider">优势 A
+            <input type="range" id="adv" min="-2" max="2" step="0.1" value="1" style="width:180px">
+            <b id="advv" style="color:var(--primary);width:34px;display:inline-block">1.0</b>
+          </span>
+        </div>
+      </div>
+      <div class="img-row">
+        <figure><img src="images/grpo_loss.jpg" alt="GRPO 曲线"><figcaption>官方配图：GRPO 训练曲线</figcaption></figure>
+        <figure><img src="images/ppo_loss.jpg" alt="PPO 曲线"><figcaption>官方配图：PPO 训练曲线</figcaption></figure>
+      </div>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>torch.distributions.Categorical</code> 采样、
+        <code>log_prob</code>、用 <code>gather</code> 取对应动作的 log 概率、
+        <code>torch.clamp</code>，再留白让你实现 <code>grpo_loss</code>。
+        注意：计算 <code>r = exp(logπ_new − logπ_old)</code> 时要 <code>detach</code> 掉分母，
+        否则梯度会走错方向。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("14");
+
+/* ===== GRPO 组归一化动画 ===== */
+const svg = document.getElementById("grpo");
+const R = [0.9, 0.2, 0.6, 0.1, 0.8, 0.3, 0.5, 0.4];
+const mu = R.reduce((a, b) => a + b, 0) / R.length;
+const sd = Math.sqrt(R.reduce((a, b) => a + (b - mu) ** 2, 0) / R.length);
+const A = R.map(r => (r - mu) / sd);
+
+function drawGRPO(step) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = `同一问题采样 8 个回答（step ${step}/4）`;
+  const X0 = 60, BW = 62, BASE = 150;
+  const phases = ["① 采样得到 8 个回答", "② 用奖励模型打分 R", "③ 计算组内均值 μ 与标准差 σ", "④ 归一化得到优势 A"];
+  R.forEach((r, i) => {
+    const x = X0 + i * BW;
+    const h = r * 110;
+    svgEl("rect", { x, y: BASE - h, width: 46, height: h, rx: 6, fill: step >= 1 ? "#e0f2fe" : "#f1f5f9", stroke: step >= 1 ? "#0ea5e9" : "#e2e8f0", "stroke-width": 1.6 }, svg);
+    svgEl("text", { x: x + 23, y: BASE - h - 6, "text-anchor": "middle", "font-size": 10, fill: "#0369a1", "font-weight": 700 }, svg).textContent = step >= 1 ? fx(r, 1) : "";
+    // 优势柱（下方）
+    if (step >= 3) {
+      const a = A[i];
+      const ah = Math.abs(a) * 22;
+      const yc = 210;
+      svgEl("rect", { x: x + 4, y: a >= 0 ? yc - ah : yc, width: 38, height: ah, rx: 4, fill: a >= 0 ? "#10b981" : "#e11d48" }, svg);
+      svgEl("text", { x: x + 23, y: a >= 0 ? yc - ah - 4 : yc + ah + 12, "text-anchor": "middle", "font-size": 9.5, fill: a >= 0 ? "#059669" : "#e11d48", "font-weight": 700 }, svg).textContent = fx(a, 1);
+    }
+  });
+  svgEl("line", { x1: 40, y1: BASE, x2: 640, y2: BASE, stroke: "#e2e8f0", "stroke-width": 1.5 }, svg);
+  if (step >= 3) {
+    svgEl("line", { x1: 40, y1: 210, x2: 640, y2: 210, stroke: "#cbd5e1", "stroke-dasharray": "4 4" }, svg);
+    svgEl("text", { x: 40, y: 240, "font-size": 11.5, fill: "#475569" }, svg).textContent = "优势 A（绿=比平均好，红=比平均差）";
+  }
+  svgEl("text", { x: 40, y: 278, "font-size": 13, "font-weight": 700, fill: "#4f46e5" }, svg).textContent = phases[step];
+  svgEl("text", { x: 40, y: 296, "font-size": 11.5, fill: "#94a3b8" }, svg).textContent =
+    step >= 2 ? `μ = ${fx(mu, 3)}，σ = ${fx(sd, 3)} → 不需要 Critic 网络` : "";
+}
+const p = new Player(1.1);
+p.load([0, 1, 2, 3]);
+p.onFrame = (i) => drawGRPO(i);
+wireControls(p, { play: "play", prev: "prev", next: "next" });
+drawGRPO(0);
+
+/* ===== PPO clip 动画 ===== */
+const cl = document.getElementById("clip");
+const PL = 70, PR = 620, PT = 30, PB = 200;
+const rmin = 0.4, rmax = 1.6;
+const Xr = r => PL + (r - rmin) / (rmax - rmin) * (PR - PL);
+function drawClip(eps, adv) {
+  cl.innerHTML = "";
+  const obj = r => Math.min(r * adv, Math.max(1 - eps, Math.min(1 + eps, r)) * adv);
+  const vals = []; for (let r = rmin; r <= rmax; r += 0.005) vals.push(obj(r));
+  const vmin = Math.min(...vals, -0.2), vmax = Math.max(...vals, 0.2);
+  const Yv = v => PB - (v - vmin) / (vmax - vmin) * (PB - PT);
+  svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, cl).textContent = `PPO 目标 min(r·A, clip(r,1−ε,1+ε)·A)，A = ${fx(adv, 1)}`;
+  // clip 区域
+  svgEl("rect", { x: Xr(1 - eps), y: PT, width: Xr(1 + eps) - Xr(1 - eps), height: PB - PT, fill: "#ecfdf5", opacity: .6 }, cl);
+  svgEl("line", { x1: Xr(1), y1: PT, x2: Xr(1), y2: PB, stroke: "#10b981", "stroke-dasharray": "4 4" }, cl);
+  svgEl("text", { x: Xr(1 - eps) - 4, y: PT + 12, "text-anchor": "end", "font-size": 10, fill: "#059669" }, cl).textContent = "1−ε";
+  svgEl("text", { x: Xr(1 + eps) + 4, y: PT + 12, "font-size": 10, fill: "#059669" }, cl).textContent = "1+ε";
+  // 坐标轴
+  svgEl("line", { x1: PL, y1: Yv(0), x2: PR, y2: Yv(0), stroke: "#e2e8f0" }, cl);
+  svgEl("line", { x1: PL, y1: PT, x2: PL, y2: PB, stroke: "#e2e8f0" }, cl);
+  svgEl("text", { x: PR, y: Yv(0) + 16, "text-anchor": "end", "font-size": 10.5, fill: "#94a3b8" }, cl).textContent = "概率比 r = π_new/π_old";
+  let d = "", dc = "";
+  for (let r = rmin; r <= rmax; r += 0.005) {
+    d += (d ? " L " : "M ") + Xr(r) + " " + Yv(r * adv);
+    dc += (dc ? " L " : "M ") + Xr(r) + " " + Yv(obj(r));
+  }
+  svgEl("path", { d, fill: "none", stroke: "#cbd5e1", "stroke-width": 2, "stroke-dasharray": "5 4" }, cl);
+  svgEl("path", { d: dc, fill: "none", stroke: "#4f46e5", "stroke-width": 3.2 }, cl);
+  svgEl("text", { x: 90, y: 50, "font-size": 11, fill: "#94a3b8" }, cl).textContent = "虚线：未裁剪 r·A";
+  svgEl("text", { x: 90, y: 68, "font-size": 11, fill: "#4f46e5" }, cl).textContent = "实线：裁剪后（梯度在这里被限制）";
+  svgEl("text", { x: 40, y: 240, "font-size": 12.5, fill: "#475569" }, cl).textContent =
+    adv >= 0 ? "A > 0：好动作。r 超过 1+ε 后目标不再增长 → 不再“过度鼓励”。"
+             : "A < 0：坏动作。r 低于 1−ε 后目标不再下降 → 不再“过度惩罚”。";
+}
+const es = document.getElementById("eps"), ev = document.getElementById("epsv");
+const as = document.getElementById("adv"), av = document.getElementById("advv");
+function updC() { ev.textContent = fx(es.value, 2); av.textContent = fx(as.value, 1); drawClip(Number(es.value), Number(as.value)); }
+es.addEventListener("input", updC); as.addEventListener("input", updC);
+drawClip(0.2, 1);
+</script>
+</body>
+</html>

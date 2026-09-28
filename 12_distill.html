@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 12 章 · 知识蒸馏 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/12_distill.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 12 章 · 训练</span>
+      <h1>知识蒸馏</h1>
+      <p class="lead">让一个小模型去模仿一个大模型。关键洞察是：老师输出的<b>完整概率分布</b>（而不只是最高分的那个词）包含了“哪些错误答案更接近正确”的额外信息——这叫“暗知识”。</p>
+      <div class="meta-row">
+        <span class="tag">黑盒 / 白盒</span>
+        <span class="tag">温度 T</span>
+        <span class="tag">KL 散度</span>
+        <span class="tag">软标签</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 两种蒸馏</h2>
+      <table>
+        <thead><tr><th>方式</th><th>学生看到什么</th><th>损失</th></tr></thead>
+        <tbody>
+          <tr><td>黑盒蒸馏</td><td>老师生成的最终文本（硬标签）</td><td>交叉熵</td></tr>
+          <tr><td>白盒蒸馏</td><td>老师在每个位置的完整概率分布</td><td>CE + KL(软标签)</td></tr>
+        </tbody>
+      </table>
+      <pre><code>loss = α · CE(student_logits, hard_label)
+     + (1-α) · T² · KL( softmax(teacher/T) ‖ softmax(student/T) )</code></pre>
+      <p>乘 <code>T²</code> 是为了补偿温度把梯度变小的问题。温度 <code>T &gt; 1</code> 会把分布“摊平”，让暗知识更明显。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 交互动画：温度如何“摊平”分布</h2>
+      <p>下面 6 个候选词的柱子是老师的输出概率。拖动温度，看分布如何变化——高分不再一枝独秀，低分也浮出水面。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">温度对软标签的影响</span></div>
+        <svg id="dist" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <span class="slider">温度 T
+            <input type="range" id="T" min="1" max="8" step="0.1" value="1" style="width:240px">
+            <b id="Tv" style="color:var(--primary);width:34px;display:inline-block">1.0</b>
+          </span>
+          <span class="slider">学生-老师差距
+            <input type="range" id="gap" min="0" max="1" step="0.05" value="0.5" style="width:140px">
+          </span>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 为什么软标签更好</div>
+        假设正确答案是“猫”。硬标签只说“猫=1，其它=0”。而老师的软标签可能说“猫 0.7，狗 0.2，兔子 0.05”——
+        这告诉学生<b>“狗比兔子更接近猫”</b>。这种相似性信息是硬标签完全没有的。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 蒸馏在 MiniMind 里的位置</h2>
+      <p>它不在主线上，而是一条<b>可选捷径</b>：你可以用 Qwen 等大模型的输出来“喂”MiniMind，
+        让小模型在同样数据下学得更快、更好。它和 SFT 的区别只是：标签来源不同、多了一项 KL 损失。</p>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>F.kl_div</code> 的 <code>log_target</code> 参数、
+        <code>F.log_softmax</code>、温度缩放 <code>logits / T</code>，
+        再留白让你实现 <code>distillation_loss</code>。最容易错的是 <code>log_softmax</code> 和 <code>softmax</code> 该分别放在谁身上——
+        记住 KL(P‖Q) 里，<code>input</code> 传 log-prob，<code>target</code> 传概率。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("12");
+
+const svg = document.getElementById("dist");
+const WORDS = ["猫", "狗", "兔", "车", "树", "山"];
+const TEACHER = [3.2, 2.1, 1.4, 0.2, -0.6, -1.1];   // 老师 logits
+const STUDENT = [2.4, 1.6, 0.9, 0.5, -0.2, -0.5];   // 学生 logits（更平）
+const softmax = (z, T) => { const m = Math.max(...z.map(v => v / T)); const e = z.map(v => Math.exp(v / T - m)); const s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); };
+
+function drawDist(T, gap) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = `候选词概率分布（温度 T = ${fx(T, 1)}）`;
+  const tp = softmax(TEACHER, T);
+  // 学生：向老师靠拢，gap 越大越不像
+  const sp = softmax(STUDENT.map((v, i) => v + (1 - gap) * (TEACHER[i] - STUDENT[i])), T);
+  const BW = 46, X0 = 70, BASE = 210, MAXH = 150;
+  const maxp = Math.max(...tp, ...sp);
+  WORDS.forEach((w, i) => {
+    const x = X0 + i * 96;
+    const th = tp[i] / maxp * MAXH, sh = sp[i] / maxp * MAXH;
+    // 老师（蓝）
+    svgEl("rect", { x: x - 20, y: BASE - th, width: 34, height: th, rx: 5, fill: "#4f46e5", opacity: .9 }, svg);
+    svgEl("text", { x: x - 3, y: BASE - th - 5, "text-anchor": "middle", "font-size": 9.5, fill: "#4f46e5", "font-weight": 700 }, svg).textContent = fx(tp[i], 2);
+    // 学生（绿）
+    svgEl("rect", { x: x + 18, y: BASE - sh, width: 34, height: sh, rx: 5, fill: "#10b981", opacity: .9 }, svg);
+    svgEl("text", { x: x + 35, y: BASE - sh - 5, "text-anchor": "middle", "font-size": 9.5, fill: "#059669", "font-weight": 700 }, svg).textContent = fx(sp[i], 2);
+    svgEl("text", { x: x + 16, y: BASE + 18, "text-anchor": "middle", "font-size": 12.5, fill: "#1e293b" }, svg).textContent = w;
+  });
+  svgEl("line", { x1: 40, y1: BASE, x2: 640, y2: BASE, stroke: "#e2e8f0", "stroke-width": 1.5 }, svg);
+  // KL
+  let kl = 0; tp.forEach((p, i) => { if (p > 1e-9) kl += p * Math.log(p / Math.max(sp[i], 1e-9)); });
+  svgEl("rect", { x: 40, y: 34, width: 14, height: 12, fill: "#4f46e5" }, svg);
+  svgEl("text", { x: 60, y: 44, "font-size": 11.5, fill: "#475569" }, svg).textContent = "老师（软标签）";
+  svgEl("rect", { x: 170, y: 34, width: 14, height: 12, fill: "#10b981" }, svg);
+  svgEl("text", { x: 190, y: 44, "font-size": 11.5, fill: "#475569" }, svg).textContent = "学生";
+  svgEl("text", { x: 40, y: 258, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = `KL(老师 ‖ 学生) = ${fx(kl, 4)}   （越小说明学生越像老师）`;
+  svgEl("text", { x: 40, y: 282, "font-size": 11.5, fill: "#94a3b8" }, svg).textContent =
+    T <= 1.2 ? "T = 1：分布尖锐，只有最高分词占主导，“暗知识”几乎看不见。" : "T 增大：分布被摊平，低概率词浮现，学生能学到“谁更接近正确答案”。";
+}
+const TS = document.getElementById("T"), TV = document.getElementById("Tv");
+const GS = document.getElementById("gap");
+function upd() { TV.textContent = fx(TS.value, 1); drawDist(Number(TS.value), Number(GS.value)); }
+TS.addEventListener("input", upd); GS.addEventListener("input", upd);
+drawDist(1, 0.5);
+</script>
+</body>
+</html>

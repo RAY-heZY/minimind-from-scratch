@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniMind 从零学习项目 · 课程主页</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="01_overview.html">开始学习 →</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="layout" style="grid-template-columns:1fr; max-width:1100px;">
+
+  <section class="hero">
+    <img src="images/logo.png" alt="MiniMind logo" style="height:84px;border:none;box-shadow:none;background:none;">
+    <h1>把 MiniMind 拆成 15 个知识点，从零亲手搭一遍</h1>
+    <p>每一个知识点都是一章：先用<b>动画网页</b>讲清原理，再进 <b>Notebook</b> 从最基础的 PyTorch 函数学起，
+       最后在留白的代码块里<b>自己把模型写出来</b>。模型部分只给文字提示——动手的人是你。</p>
+    <div class="meta-row" style="justify-content:center;">
+      <span class="tag">15 章 · 15 个动画网页 · 15 个 Notebook</span>
+      <span class="tag">uv 环境管理</span>
+      <span class="tag">CPU 也能跑通原理演示</span>
+      <span class="tag">对齐 Qwen3 的 64M 小模型</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>这是一门什么样的课</h2>
+    <p>MiniMind 是一个用极低成本（约 3 元、2 小时）从零训练 64M 参数小语言模型的开源项目。
+       它的价值在于——<b>代码足够短，短到你能一行一行读懂</b>。本课程把它拆开、摊平，变成一条可以自己走完的学习路径。</p>
+    <div class="img-row">
+      <figure>
+        <img src="images/LLM-structure.jpg" alt="MiniMind 稠密模型结构">
+        <figcaption>MiniMind-3 稠密模型结构（Transformer Decoder-Only）</figcaption>
+      </figure>
+      <figure>
+        <img src="images/LLM-structure-moe.jpg" alt="MiniMind MoE 结构">
+        <figcaption>MiniMind-3-MoE 结构（前馈层替换为专家混合）</figcaption>
+      </figure>
+    </div>
+    <div class="callout note">
+      <div class="ct">📌 本课的学习闭环</div>
+      动画看懂原理 → Notebook 里先熟悉本章要用的函数 → 读文字提示 → <b>在空白代码块里自己实现</b> → 跑通、对照官方实现。
+      每章的 Notebook 都留了「自测区」，写不出来时再看提示，不要直接抄答案。
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>课程地图</h2>
+    <p style="color:var(--muted)">共 15 章，分三部分：基础 → 模型 → 训练。建议按顺序推进。</p>
+    <div class="grid-cards" id="grid"></div>
+  </section>
+
+  <section class="card">
+    <h2>三分钟跑起来</h2>
+    <pre><code><span class="c"># 1. 进入项目目录（已用 uv 管理环境）</span>
+cd minimind-from-scratch
+
+<span class="c"># 2. 创建隔离环境并安装依赖（uv 会自动读取 pyproject.toml）</span>
+uv sync
+
+<span class="c"># 3. 启动 JupyterLab，打开 notebooks/ 下的任意一章</span>
+uv run jupyter lab
+
+<span class="c"># 4. 只想看动画网页？直接用浏览器打开 index.html 即可</span></code></pre>
+    <div class="callout tip">
+      <div class="ct">✅ 关于算力</div>
+      原理演示全部使用小张量，<b>CPU 就能跑</b>。真正训练 64M 模型建议单卡 3090/4090；
+      训练章节的 Notebook 以「讲清算法 + 留白实现」为主，跑通与否取决于你的硬件。
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>目录结构</h2>
+    <pre><code>minimind-from-scratch/
+├── index.html              <span class="c"># 你正在看的这一页（站点首页）</span>
+├── 01_overview.html … 15_agent_rl.html   <span class="c"># 15 个原理动画网页</span>
+├── assets/                 <span class="c"># 共用样式与脚本</span>
+├── images/                 <span class="c"># MiniMind 官方配图</span>
+├── notebooks/              <span class="c"># 15 个引导式 Notebook</span>
+│   └── 01_overview.ipynb … 15_agent_rl.ipynb
+├── tools/                  <span class="c"># 生成与校验脚本</span>
+├── pyproject.toml          <span class="c"># uv 依赖声明</span>
+└── README.md</code></pre>
+    <div class="callout note">
+      <div class="ct">📌 网页与 Notebook 的分工</div>
+      网页在站点里直接看（这就是它们的用途）；Notebook 需要交互运行，
+      所以每页右上角的「配套 Notebook」链接会跳到 GitHub 上对应的 <code>.ipynb</code>。
+    </div>
+  </section>
+
+</main>
+
+<script src="assets/chapters.js"></script>
+<script>
+  const grid = document.getElementById("grid");
+  grid.innerHTML = CHAPTERS.map(c => `
+    <a class="chap" href="${c.file}">
+      <span class="part p-${c.part}">${PART_LABEL[c.part]}</span>
+      <div class="num">第 ${c.n} 章</div>
+      <h3>${c.title}</h3>
+      <p>${c.desc}</p>
+    </a>`).join("");
+</script>
+</body>
+</html>

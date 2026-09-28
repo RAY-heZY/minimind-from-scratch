@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 04 章 · RoPE 旋转位置编码 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/04_rope.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 04 章 · 模型</span>
+      <h1>RoPE 旋转位置编码</h1>
+      <p class="lead">注意力本身对顺序毫无感知——把“猫追狗”和“狗追猫”当成同一个词袋。RoPE 的做法极其优雅：把每个 token 的向量按它的位置<b>旋转一个角度</b>，于是两个 token 的内积自然只和它们的<b>相对距离</b>有关。</p>
+      <div class="meta-row">
+        <span class="tag">rope_theta = 1e6</span>
+        <span class="tag">相对位置</span>
+        <span class="tag">YaRN 外推</span>
+        <span class="tag">作用于 Q / K</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 核心思想：把位置变成旋转角</h2>
+      <p>把向量的每两个维度看成一个复数平面上的点。位置 <code>m</code> 的 token，其第 <code>i</code> 组维度旋转角度 <code>m·θᵢ</code>：</p>
+      <pre><code>θᵢ = 1 / (10000 ^ (2i / d))          <span class="c"># 每组维度频率不同</span>
+[x', y'] = [x·cos(mθ) − y·sin(mθ),  x·sin(mθ) + y·cos(mθ)]</code></pre>
+      <p>因为旋转是<b>等距变换</b>，两个向量都旋转后，它们的内积只依赖角度差
+        <code>(m−n)·θ</code>——也就是<b>相对位置</b>。这就是 RoPE 的全部魔法。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：位置 m 的向量被旋转了多少</h2>
+      <p>拖动滑块改变 token 的位置 <code>m</code>，观察蓝色向量（Query）如何随位置旋转；
+        橙色向量固定在位置 0。两者的夹角始终等于 <code>m·θ</code>。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">交互动画</span><span class="t">位置 → 旋转角</span></div>
+        <svg id="rope" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <span class="slider">位置 m
+            <input type="range" id="m" min="0" max="24" step="1" value="6" style="width:220px">
+            <b id="mv" style="color:var(--primary);width:26px;display:inline-block">6</b>
+          </span>
+          <span class="slider">θ (弧度/位)
+            <input type="range" id="th" min="0.05" max="0.6" step="0.01" value="0.25" style="width:140px">
+          </span>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 相对位置不变性</div>
+        <code>⟨RoPE(q, m), RoPE(k, n)⟩ = f(m − n)</code>。模型学到的是“相隔 3 个位置”这样的关系，
+        而不是“绝对第 7 个位置”。这让长度外推成为可能。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 多频率：为什么用一组不同的 θ</h2>
+      <p>如果所有维度都用同一个 θ，旋转太快会让远距离位置“绕圈”难以区分。所以 RoPE 让不同维度对拥有<b>从快到慢</b>的频率：
+        高维旋转慢（负责粗粒度远近），低维旋转快（负责细粒度分辨）。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">不同维度的旋转速度（同一位置）</span></div>
+        <svg id="freq" viewBox="0 0 680 200"></svg>
+      </div>
+      <figure>
+        <img src="images/rope_ppl.png" alt="RoPE 外推 perplexity">
+        <figcaption>官方配图：不同 RoPE 配置下的困惑度对比（YaRN 外推效果）</figcaption>
+      </figure>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>torch.outer</code>、<code>torch.cos/sin</code>、
+        <code>torch.cat</code> 与 <code>rotate_half</code> 的切片翻转，再让你自己写出
+        <code>precompute_freqs_cis</code> 与 <code>apply_rotary_pos_emb</code>。
+        难点是 <code>unsqueeze</code> 的广播维度——想清楚 cos/sin 要沿哪个轴对齐到 head_dim。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("04");
+
+const svg = document.getElementById("rope");
+const CX = 170, CY = 150, R = 105;
+
+// 静态骨架
+svgEl("circle", { cx: CX, cy: CY, r: R, fill: "none", stroke: "#e2e8f0", "stroke-width": 1.5 }, svg);
+svgEl("line", { x1: CX - R, y1: CY, x2: CX + R, y2: CY, stroke: "#eef1f8", "stroke-width": 1 }, svg);
+svgEl("line", { x1: CX, y1: CY - R, x2: CX, y2: CY + R, stroke: "#eef1f8", "stroke-width": 1 }, svg);
+svgEl("text", { x: CX + R + 4, y: CY + 4, "font-size": 10, fill: "#94a3b8" }, svg).textContent = "x";
+svgEl("text", { x: CX - 3, y: CY - R - 4, "font-size": 10, fill: "#94a3b8" }, svg).textContent = "y";
+
+// 位置 0 的 key（固定）
+const kg = svgEl("g", {}, svg);
+svgEl("line", { x1: CX, y1: CY, x2: CX + R, y2: CY, stroke: "#f59e0b", "stroke-width": 3.5, "stroke-linecap": "round" }, kg);
+svgEl("text", { x: CX + R - 6, y: CY - 8, "font-size": 12, "font-weight": 700, fill: "#b45309" }, kg).textContent = "k (位置 0)";
+
+// 位置 m 的 query（旋转）
+const qg = svgEl("g", {}, svg);
+qg.style.transformOrigin = `${CX}px ${CY}px`;
+qg.style.transition = "transform .35s cubic-bezier(.4,0,.2,1)";
+svgEl("line", { x1: CX, y1: CY, x2: CX + R, y2: CY, stroke: "#4f46e5", "stroke-width": 3.5, "stroke-linecap": "round" }, qg);
+svgEl("text", { x: CX + R - 6, y: CY - 8, "font-size": 12, "font-weight": 700, fill: "#4f46e5" }, qg).textContent = "q (位置 m)";
+
+// 角度弧
+const arc = svgEl("path", { fill: "none", stroke: "#0ea5e9", "stroke-width": 2 }, svg);
+
+// 右侧读数
+const read = svgEl("text", { x: 360, y: 60, "font-size": 14, "font-weight": 700, fill: "#1e293b" }, svg);
+const read2 = svgEl("text", { x: 360, y: 90, "font-size": 13, fill: "#475569" }, svg);
+const read3 = svgEl("text", { x: 360, y: 118, "font-size": 13, fill: "#475569" }, svg);
+const read4 = svgEl("text", { x: 360, y: 146, "font-size": 13, fill: "#475569" }, svg);
+const barBg = svgEl("rect", { x: 360, y: 176, width: 280, height: 18, rx: 9, fill: "#eef1f8" }, svg);
+const bar = svgEl("rect", { x: 360, y: 176, width: 0, height: 18, rx: 9, fill: "#0ea5e9" }, svg);
+bar.style.transition = "width .35s ease";
+
+function drawRope(m, th) {
+  const deg = m * th * 180 / Math.PI;
+  qg.style.transform = `rotate(${-deg}deg)`;   // SVG y 轴向下，取负号表示逆时针
+  // 弧线
+  const a = m * th;
+  const ax = CX + 40 * Math.cos(-a), ay = CY + 40 * Math.sin(-a);
+  const large = a > Math.PI ? 1 : 0;
+  arc.setAttribute("d", `M ${CX + 40} ${CY} A 40 40 0 ${large} 0 ${ax} ${ay}`);
+  read.textContent = `位置 m = ${m}`;
+  read2.textContent = `旋转角 = m·θ = ${fx(a, 3)} rad = ${fx(deg, 1)}°`;
+  read3.textContent = `与 k 的夹角 = ${fx(deg, 1)}°`;
+  const cosv = Math.cos(a);
+  read4.textContent = `注意力分数 ∝ cos(mθ) = ${fx(cosv, 3)}`;
+  const w = (cosv + 1) / 2 * 280;
+  bar.setAttribute("width", w);
+  bar.setAttribute("fill", cosv >= 0 ? "#10b981" : "#e11d48");
+}
+const mS = document.getElementById("m"), thS = document.getElementById("th"), mv = document.getElementById("mv");
+function upd() { mv.textContent = mS.value; drawRope(Number(mS.value), Number(thS.value)); }
+mS.addEventListener("input", upd); thS.addEventListener("input", upd);
+upd();
+
+/* ---- 多频率小图 ---- */
+const fs = document.getElementById("freq");
+const bands = [0, 1, 2, 3, 4, 5];
+const F0 = 1.0;
+const colors = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6", "#e11d48"];
+const bx0 = 60, by0 = 150, br = 60;
+svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, fs).textContent = "位置 m = 8 时，6 个维度对的旋转角（频率由高到低）";
+const fg = bands.map((b, i) => {
+  const cx = bx0 + i * 105, cy = 105;
+  svgEl("circle", { cx, cy, r: br, fill: "none", stroke: "#eef1f8", "stroke-width": 1 }, fs);
+  const g = svgEl("g", {}, fs);
+  g.style.transformOrigin = `${cx}px ${cy}px`;
+  g.style.transition = "transform .35s ease";
+  svgEl("line", { x1: cx, y1: cy, x2: cx + br, y2: cy, stroke: colors[i], "stroke-width": 3, "stroke-linecap": "round" }, g);
+  svgEl("text", { x: cx, y: cy + br + 22, "text-anchor": "middle", "font-size": 10.5, fill: "#64748b" }, fs).textContent = `dim ${2 * b}~${2 * b + 1}`;
+  return { g, i };
+});
+function drawFreq(m) {
+  fg.forEach(({ g, i }) => {
+    const theta = F0 / Math.pow(10000, (2 * i) / 12);
+    const deg = m * theta * 180 / Math.PI;
+    g.style.transform = `rotate(${-deg}deg)`;
+  });
+}
+drawFreq(8);
+</script>
+</body>
+</html>

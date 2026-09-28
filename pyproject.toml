@@ -1,0 +1,38 @@
+[project]
+name = "minimind-from-scratch"
+version = "0.1.0"
+description = "MiniMind 从零学习项目：把模型与训练拆成多个知识点，每章配动画网页 + 引导式 Notebook。"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # 核心
+    "torch>=2.2",
+    "numpy>=1.26",
+    "einops>=0.8",
+    # 分词 / 数据
+    "tokenizers>=0.20",
+    "transformers>=4.44",
+    "datasets>=3.0",
+    "tiktoken>=0.7",
+    "jieba>=0.42",
+    # 交互式学习
+    "jupyterlab>=4.2",
+    "ipykernel>=6.29",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+# 训练 / 强化学习阶段（按需启用）
+train = [
+    "trl>=0.13",
+    "wandb>=0.22",
+    "swanlab>=0.9",
+]
+
+[dependency-groups]
+dev = [
+    "nbformat>=5.10",
+]
+
+[tool.uv]
+package = false

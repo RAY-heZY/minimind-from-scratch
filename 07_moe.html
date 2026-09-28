@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 07 章 · MoE 混合专家 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/07_moe.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 07 章 · 模型</span>
+      <h1>MoE 混合专家</h1>
+      <p class="lead">如果每个 token 都要过同一个巨大的前馈网络，算力就浪费了。MoE 把前馈层拆成多个“专家”，每个 token 只激活其中一两个——<b>参数量上去了，计算量却几乎不变</b>。</p>
+      <div class="meta-row">
+        <span class="tag">4 专家 / Top-1</span>
+        <span class="tag">router 路由</span>
+        <span class="tag">负载均衡 aux loss</span>
+        <span class="tag">198M-A64M</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 稀疏激活：用参数换算力</h2>
+      <pre><code>scores   = softmax(router(x))            <span class="c"># 每个 token 对 4 个专家打分</span>
+topk_w, topk_i = topk(scores, k=1)       <span class="c"># 只选分数最高的 1 个专家</span>
+y = Σ  weight_i · expert_i(x)            <span class="c"># 只调用被选中的专家</span></code></pre>
+      <p>稠密模型每个 token 用全部参数；MoE 每个 token 只用一小部分。所以 MoE 的参数量可以是稠密的 3 倍，
+        但<b>单 token 计算量（激活参数）几乎一样</b>。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：token 被路由到哪个专家</h2>
+      <p>8 个 token 依次经过路由器，按最高分被送往对应专家。右下角实时统计各专家的负载。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">Top-1 路由过程</span></div>
+        <svg id="moe" viewBox="0 0 680 320"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+          <button class="btn ghost" id="reset">重来</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 负载均衡为什么重要</div>
+        如果所有 token 都涌向同一个专家，其它专家就“饿死”，参数白白浪费。MiniMind 用
+        <code>aux_loss</code> 惩罚不均衡的负载，让 4 个专家被均匀使用。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 辅助损失（负载均衡）</h2>
+      <pre><code>load  = one_hot(topk_idx).mean(0)        <span class="c"># 每个专家实际被选中的比例</span>
+prob  = scores.mean(0)                    <span class="c"># 每个专家的平均路由概率</span>
+aux_loss = (load · prob).sum() * n_experts * coef</code></pre>
+      <figure>
+        <img src="images/LLM-structure-moe.jpg" alt="MiniMind MoE 结构">
+        <figcaption>官方配图：MoE 结构（前馈层替换为多个专家 + 路由器）</figcaption>
+      </figure>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>torch.topk</code>、<code>F.softmax</code>、
+        <code>torch.zeros_like</code> + <code>index_add_</code> 的“按需累加”技巧、
+        <code>F.one_hot</code>，再留白让你实现 <code>MOEFeedForward</code>。
+        最烧脑的是用 <code>mask</code> 把 token 分派给不同专家——先想清楚“谁该去哪”，再写循环。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("07");
+
+const T = 8, E = 4;
+// 固定 router 分数（可复现）
+function rnd(seed) { let s = seed; return () => (s = (s * 9301 + 49297) % 233280) / 233280; }
+const r = rnd(123);
+let logits = Array.from({ length: T }, () => Array.from({ length: E }, () => r() * 3));
+let probs = logits.map(row => { const m = Math.max(...row); const e = row.map(v => Math.exp(v - m)); const s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); });
+let choice = probs.map(row => row.indexOf(Math.max(...row)));
+let weights = probs.map((row, i) => row[choice[i]]);
+
+const svg = document.getElementById("moe");
+const EX = 470, EY0 = 40, EH = 52, EGAP = 16;
+const TX = 40, TY0 = 46, TH = 24;
+
+function draw(step) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "Token 序列";
+  svgEl("text", { x: 360, y: 24, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "Router";
+  svgEl("text", { x: 470, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "专家";
+  // tokens
+  for (let i = 0; i < T; i++) {
+    const y = TY0 + i * (TH + 4);
+    const active = i === step, done = i < step;
+    svgEl("rect", { x: TX, y, width: 84, height: TH, rx: 6, fill: active ? "#fef3c7" : (done ? "#eef2ff" : "#fff"), stroke: active ? "#f59e0b" : (done ? "#4f46e5" : "#e2e8f0"), "stroke-width": active ? 2.4 : 1.3 }, svg);
+    svgEl("text", { x: TX + 42, y: y + 16, "text-anchor": "middle", "font-size": 11, fill: "#475569" }, svg).textContent = "token " + i;
+    // router box
+    svgEl("rect", { x: 150, y, width: 92, height: TH, rx: 6, fill: active ? "#f5f3ff" : "#fafbff", stroke: "#c4b5fd", "stroke-width": active ? 2 : 1 }, svg);
+    svgEl("text", { x: 196, y: y + 16, "text-anchor": "middle", "font-size": 10, fill: "#6d28d9" }, svg).textContent = probs[i].map(v => fx(v, 1)).join(" ");
+    if (done || active) {
+      const target = EY0 + choice[i] * (EH + EGAP) + EH / 2;
+      svgEl("path", { d: `M 242 ${y + TH / 2} C 340 ${y + TH / 2}, 360 ${target}, ${EX} ${target}`, fill: "none", stroke: active ? "#f59e0b" : "#0ea5e9", "stroke-width": active ? 2.4 : 1.4, opacity: done ? .5 : 1, class: active ? "flowline" : "" }, svg);
+    }
+  }
+  // experts
+  const load = Array(E).fill(0);
+  for (let i = 0; i < step; i++) load[choice[i]]++;
+  for (let e = 0; e < E; e++) {
+    const y = EY0 + e * (EH + EGAP);
+    svgEl("rect", { x: EX, y, width: 150, height: EH, rx: 10, fill: "#e0f2fe", stroke: "#0ea5e9", "stroke-width": 1.8 }, svg);
+    svgEl("text", { x: EX + 14, y: y + 22, "font-size": 12, "font-weight": 700, fill: "#0369a1" }, svg).textContent = `专家 ${e}`;
+    svgEl("text", { x: EX + 14, y: y + 40, "font-size": 10.5, fill: "#0c4a6e" }, svg).textContent = `已被选中 ${load[e]} 次`;
+    // load bar
+    svgEl("rect", { x: EX + 90, y: y + 16, width: 50, height: 8, rx: 4, fill: "#bae6fd" }, svg);
+    svgEl("rect", { x: EX + 90, y: y + 16, width: Math.min(50, load[e] * 12), height: 8, rx: 4, fill: "#0284c7" }, svg);
+  }
+  // aux loss
+  const total = Math.max(step, 1);
+  const freq = load.map(l => l / total);
+  const avgP = Array(E).fill(0);
+  for (let i = 0; i < step; i++) probs[i].forEach((p, e) => avgP[e] += p / total);
+  const aux = freq.reduce((s, f, e) => s + f * avgP[e], 0) * E;
+  svgEl("text", { x: 20, y: 290, "font-size": 12.5, fill: "#475569" }, svg).textContent =
+    `已处理 ${step}/${T} 个 token   ·   负载 = [${load.join(", ")}]   ·   aux_loss 系数 = ${fx(aux, 3)}`;
+  svgEl("text", { x: 20, y: 310, "font-size": 11.5, fill: "#94a3b8" }, svg).textContent =
+    "aux_loss 越接近 1 表示负载越均衡（理想情况每个专家各分到 2 个 token）";
+}
+const p = new Player(1.1);
+p.load(Array.from({ length: T + 1 }, (_, i) => i));
+p.onFrame = (i) => draw(i);
+wireControls(p, { play: "play", prev: "prev", next: "next" });
+document.getElementById("reset").onclick = () => { p.pause(); p.i = 0; draw(0); };
+draw(0);
+</script>
+</body>
+</html>

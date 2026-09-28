@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 02 章 · 分词器与数据流水线 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/02_tokenizer.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 02 章 · 基础</span>
+      <h1>分词器与数据流水线</h1>
+      <p class="lead">模型看不见文字，只能看见整数。分词器负责把文字切成 token 并映射成 id；数据流水线负责把这些 id 组装成“输入—标签”对喂给模型。</p>
+      <div class="meta-row">
+        <span class="tag">BPE</span>
+        <span class="tag">vocab_size = 6400</span>
+        <span class="tag">特殊 token</span>
+        <span class="tag">Dataset / DataLoader</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 为什么需要分词</h2>
+      <p>如果按字符切，序列太长；如果按词切，词表爆炸且无法处理新词。<b>子词（subword）</b>是折中：
+        常见片段合成一个 token，罕见词拆成小片段。MiniMind 用的是 <b>BPE</b>，词表只有 6400。</p>
+      <div class="callout note">
+        <div class="ct">📌 三个关键特殊 token</div>
+        <code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code> 标记对话边界；
+        <code>&lt;think&gt;</code> 包裹思维链；<code>&lt;tool_call&gt;</code> 包裹工具调用。它们不参与“语义压缩”，只做结构标记。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：BPE 到底在做什么</h2>
+      <p>BPE 的规则只有一句话：<b>反复把出现次数最多的相邻符号对合并成一个新符号。</b>
+        下面用经典语料演示。点“合并下一步”，看词表怎么长出来。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">BPE 合并过程</span></div>
+        <svg id="bpe" viewBox="0 0 680 300"></svg>
+        <div class="controls">
+          <button class="btn" id="merge">合并下一步</button>
+          <button class="btn ghost" id="reset">重来</button>
+          <span class="slider" id="binfo" style="margin-left:auto;font-weight:600;color:var(--primary)"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 动画：滑动窗口与下一词预测</h2>
+      <p>预训练任务非常朴素——给一段文本，让模型在<b>每一个位置</b>都预测下一个 token。
+        输入和标签其实来自<b>同一串 id，只是错开一位</b>。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">input_ids 与 labels 错位一位</span></div>
+        <svg id="slide" viewBox="0 0 680 190"></svg>
+        <div class="controls">
+          <button class="btn" id="splay">▶ 播放</button>
+          <button class="btn ghost" id="sprev">上一步</button>
+          <button class="btn ghost" id="snext">下一步</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 一句话记住</div>
+        <code>labels = input_ids[1:]</code>，<code>input = input_ids[:-1]</code>。因果掩码保证位置 t 只能看到 ≤ t 的信息。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. 数据流水线要组装什么</h2>
+      <ul>
+        <li><b>PretrainDataset</b>：读 jsonl 里的 <code>text</code>，加 BOS/EOS，补齐到 <code>max_length</code>，pad 位置标签设 <code>-100</code>（不计损失）。</li>
+        <li><b>SFTDataset</b>：读多轮 <code>conversations</code>，套 <code>apply_chat_template</code>，再用 <code>generate_labels</code> 把<b>只有 assistant 回答</b>的部分标为有效标签。</li>
+        <li><b>DataLoader</b>：把样本打成 batch，交给训练循环。</li>
+      </ul>
+      <figure>
+        <img src="images/dataset.jpg" alt="数据集构成">
+        <figcaption>官方配图：MiniMind 各阶段数据集的构成</figcaption>
+      </figure>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        打开配套 Notebook，先用 <code>tokenizers</code> 手搓一个 mini BPE，再实现 <code>PretrainDataset</code>。
+        先跑通“文本 → id → 错位标签”这一条最小闭环，再谈模型。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("02");
+
+/* ================= BPE 动画 ================= */
+const corpus = [ {w:["l","o","w"], n:5}, {w:["l","o","w","e","r"], n:2},
+                 {w:["n","e","w","e","s","t"], n:6}, {w:["w","i","d","e","s","t"], n:3} ];
+const bsvg = document.getElementById("bpe");
+let vocab, words, stepNo;
+
+function pairCounts(words) {
+  const m = {};
+  for (const {w, n} of words) for (let i = 0; i < w.length - 1; i++) {
+    const k = w[i] + "\u0001" + w[i + 1];
+    m[k] = (m[k] || 0) + n;
+  }
+  return m;
+}
+function bestPair(m) {
+  let bk = null, bv = -1;
+  for (const k in m) if (m[k] > bv) { bv = m[k]; bk = k; }
+  return bk ? { a: bk.split("\u0001")[0], b: bk.split("\u0001")[1], v: bv } : null;
+}
+function mergePair(words, a, b) {
+  const merged = a + b;
+  return words.map(({ w, n }) => {
+    const out = [];
+    for (let i = 0; i < w.length;) {
+      if (i < w.length - 1 && w[i] === a && w[i + 1] === b) { out.push(merged); i += 2; }
+      else { out.push(w[i]); i += 1; }
+    }
+    return { w: out, n };
+  });
+}
+function drawBPE(highlight) {
+  bsvg.innerHTML = "";
+  svgEl("text", { x: 20, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, bsvg).textContent = "语料（数字为出现次数）";
+  words.forEach((row, r) => {
+    const y = 46 + r * 40;
+    svgEl("text", { x: 20, y: y + 22, "font-size": 12, fill: "#64748b" }, bsvg).textContent = "×" + row.n;
+    let x = 52;
+    row.w.forEach((tok, i) => {
+      const w = 16 + tok.length * 11;
+      const hot = highlight && ((tok === highlight.a && row.w[i + 1] === highlight.b) || tok === highlight.merged);
+      svgEl("rect", { x, y, width: w, height: 28, rx: 7, fill: hot ? "#fef3c7" : "#fff", stroke: hot ? "#f59e0b" : "#cbd5e1", "stroke-width": hot ? 2.5 : 1.5 }, bsvg);
+      svgEl("text", { x: x + w / 2, y: y + 19, "text-anchor": "middle", "font-size": 13, "font-family": "monospace", fill: "#1e293b" }, bsvg).textContent = tok;
+      x += w + 6;
+    });
+  });
+  // 词表区
+  const vy = 210;
+  svgEl("text", { x: 20, y: vy, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, bsvg).textContent = "已合并 token";
+  let vx = 20;
+  vocab.forEach(t => {
+    const w = 16 + t.length * 11;
+    svgEl("rect", { x: vx, y: vy + 10, width: w, height: 26, rx: 7, fill: "#eef2ff", stroke: "#4f46e5", "stroke-width": 1.5 }, bsvg);
+    svgEl("text", { x: vx + w / 2, y: vy + 28, "text-anchor": "middle", "font-size": 12.5, "font-family": "monospace", fill: "#4f46e5" }, bsvg).textContent = t;
+    vx += w + 8;
+  });
+}
+function resetBPE() {
+  words = corpus.map(o => ({ w: o.w.slice(), n: o.n }));
+  vocab = []; stepNo = 0;
+  drawBPE(null);
+  document.getElementById("binfo").textContent = "第 0 次合并";
+}
+document.getElementById("merge").onclick = () => {
+  const bp = bestPair(pairCounts(words));
+  if (!bp) return;
+  words = mergePair(words, bp.a, bp.b);
+  vocab.push(bp.a + bp.b); stepNo++;
+  drawBPE({ a: bp.a, b: bp.b, merged: bp.a + bp.b });
+  document.getElementById("binfo").textContent = `第 ${stepNo} 次合并：最频繁对 “${bp.a}”+“${bp.b}” (${bp.v} 次) → “${bp.a + bp.b}”`;
+};
+document.getElementById("reset").onclick = resetBPE;
+resetBPE();
+
+/* ================= 滑动窗口动画 ================= */
+const toks = ["<bos>", "小", "猫", "坐", "在", "垫", "子", "上", "<eos>"];
+const ssvg = document.getElementById("slide");
+let sw = 3;
+function drawSlide(pos) {
+  ssvg.innerHTML = "";
+  const bw2 = 58, x0 = 40, y = 40;
+  svgEl("text", { x: x0, y: 24, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, ssvg).textContent = "input_ids（模型看到的）";
+  toks.forEach((t, i) => {
+    const x = x0 + i * (bw2 + 4);
+    const inWin = i >= pos - sw && i < pos;
+    svgEl("rect", { x, y, width: bw2, height: 34, rx: 8, fill: inWin ? "#e0f2fe" : "#fff", stroke: inWin ? "#0ea5e9" : "#cbd5e1", "stroke-width": inWin ? 2.2 : 1.2, opacity: i < pos ? 1 : .4 }, ssvg);
+    svgEl("text", { x: x + bw2 / 2, y: y + 22, "text-anchor": "middle", "font-size": 13, fill: "#1e293b" }, ssvg).textContent = t;
+  });
+  // 目标行
+  const y2 = 108;
+  svgEl("text", { x: x0, y: y2 - 8, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, ssvg).textContent = "labels（要预测的）";
+  toks.forEach((t, i) => {
+    const x = x0 + i * (bw2 + 4);
+    const isTarget = i === pos;
+    if (i === 0) return;
+    svgEl("rect", { x, y: y2, width: bw2, height: 34, rx: 8, fill: isTarget ? "#fef3c7" : "#fff", stroke: isTarget ? "#f59e0b" : "#e2e8f0", "stroke-width": isTarget ? 2.5 : 1.2, opacity: i <= pos ? 1 : .35 }, ssvg);
+    svgEl("text", { x: x + bw2 / 2, y: y2 + 22, "text-anchor": "middle", "font-size": 13, fill: isTarget ? "#b45309" : "#64748b" }, ssvg).textContent = t;
+  });
+  svgEl("text", { x: 340, y: 178, "text-anchor": "middle", "font-size": 12.5, fill: "#475569" }, ssvg)
+    .textContent = `位置 ${pos}：用前 ${sw} 个 token 预测 “${toks[pos]}”`;
+}
+const sp = new Player(1.2);
+sp.load(toks.map((_, i) => i).slice(1));
+sp.onFrame = (i) => drawSlide(i + 1);
+wireControls(sp, { play: "splay", prev: "sprev", next: "snext" });
+drawSlide(1);
+</script>
+</body>
+</html>

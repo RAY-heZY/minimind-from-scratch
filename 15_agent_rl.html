@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 15 章 · Agentic RL 智能体强化学习 · MiniMind 从零学习</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><span class="dot">MM</span> MiniMind 从零学习</a>
+  <span class="spacer"></span>
+  <nav>
+    <a href="index.html">课程主页</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch" target="_blank" rel="noopener">GitHub ↗</a>
+    <a href="https://github.com/RAY-heZY/minimind-from-scratch/blob/main/notebooks/15_agent_rl.ipynb" target="_blank" rel="noopener">配套 Notebook ↗</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="side"></aside>
+  <main>
+    <div class="chapter-head">
+      <span class="eyebrow">第 15 章 · 训练</span>
+      <h1>Agentic RL 智能体强化学习</h1>
+      <p class="lead">前 14 章的模型只会“一次说完”。智能体要会<b>多轮行动</b>：调用工具、看结果、再决定下一步。这一章把强化学习从“单轮回答”扩展到“整条轨迹”。</p>
+      <div class="meta-row">
+        <span class="tag">多轮轨迹 τ</span>
+        <span class="tag">Tool Use</span>
+        <span class="tag">延迟奖励</span>
+        <span class="tag">rollout 解耦</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>1. 奖励不只来自答案</h2>
+      <pre><code>R(τ) = R_answer + R_tool + R_format − R_unfinished
+        │          │         │          └ 没给出最终答案要扣分
+        │          │         └ 格式错误要扣分
+        │          └ 工具调用是否合法、是否有用
+        └ 最终答案对不对（可能延迟到最后才结算）</code></pre>
+      <p>与 GRPO 的区别：GRPO 优化一条回答，Agentic RL 优化<b>一整条轨迹</b>——
+        包括“想 → 调工具 → 看结果 → 再想 → 答”的每一步。</p>
+    </section>
+
+    <section class="card">
+      <h2>2. 动画：一条轨迹与它的奖励</h2>
+      <p>看模型如何一步步完成一个需要工具的数学题，以及每个环节贡献了多少奖励。</p>
+      <div class="stage">
+        <div class="stage-head"><span class="badge">动画</span><span class="t">多轮工具调用轨迹</span></div>
+        <svg id="agent" viewBox="0 0 680 340"></svg>
+        <div class="controls">
+          <button class="btn" id="play">▶ 播放</button>
+          <button class="btn ghost" id="prev">上一步</button>
+          <button class="btn ghost" id="next">下一步</button>
+          <button class="btn ghost" id="reset">重来</button>
+        </div>
+      </div>
+      <div class="callout key">
+        <div class="ct">🔑 延迟奖励（delayed reward）</div>
+        调工具这一动作本身可能没有对错，它的价值取决于<b>最终能不能解出题</b>。
+        所以奖励要等到轨迹结束才结算，再沿着整条轨迹回传——这就是“延迟”。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 训练管线：rollout 与 train 解耦</h2>
+      <figure>
+        <img src="images/rl-structure.jpg" alt="MiniMind RL 结构">
+        <figcaption>官方配图：MiniMind 的 RL 结构——训练侧、轨迹侧、rollout 侧解耦</figcaption>
+      </figure>
+      <pre><code>while True:
+    batch = rollout_engine.generate(prompts)   <span class="c"># ① 用当前策略采样轨迹</span>
+    rewards = compute_rewards(batch)           <span class="c"># ② 按规则 / 环境算奖励</span>
+    advantages = normalize(rewards)            <span class="c"># ③ 组内归一化</span>
+    policy_update(batch, advantages)           <span class="c"># ④ GRPO/CISPO 更新策略</span></code></pre>
+      <div class="img-row">
+        <figure><img src="images/agent_rl_loss.jpg" alt="Agentic RL 曲线"><figcaption>官方配图：Agentic RL 训练曲线</figcaption></figure>
+        <figure><img src="images/agent_webui.jpg" alt="Agent WebUI"><figcaption>官方配图：Agent WebUI（思考 + 工具选择 + 多轮交互）</figcaption></figure>
+      </div>
+      <div class="callout tip">
+        <div class="ct">✅ 动手提示</div>
+        Notebook 里先带你练 <code>json.loads/dumps</code> 解析工具调用、
+        <code>re</code> 提取 <code>&lt;tool_call&gt;</code> 标签、正则校验答案，
+        再留白让你实现 <code>compute_reward</code> 与一个简化的单轮 <code>grpo_step</code>。
+        真实的多轮 rollout 需要环境交互，先用“离线轨迹 + 规则奖励”把逻辑跑通。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. 结语：你已经走完了整条链路</h2>
+      <p>从分词到预训练，从 SFT 到 LoRA / 蒸馏 / DPO / RL，再到智能体——
+        这就是一个现代大语言模型的完整生命周期。MiniMind 把它压缩到 64M 参数、几小时训练，
+        为的就是让你能<b>真正把它跑一遍、改一遍、懂一遍</b>。</p>
+      <div class="callout note">
+        <div class="ct">📌 下一步建议</div>
+        把 15 章的 Notebook 里的留白全部自己写一遍；然后对照官方 <code>model_minimind.py</code> 逐行 diff；
+        最后试着改一个超参（层数、head 数、词表大小）重新训练，观察 loss 和生成质量的变化。
+      </div>
+    </section>
+
+    <div class="pager"></div>
+  </main>
+</div>
+
+<script src="assets/common.js"></script>
+<script src="assets/chapters.js"></script>
+<script>
+bootChapter("15");
+
+const svg = document.getElementById("agent");
+const TRAJ = [
+  { t: "用户提问", d: "“小明有 3 盒糖，每盒 12 颗，吃了 5 颗，还剩几颗？”", type: "user", r: 0, label: "" },
+  { t: "思考 &lt;think&gt;", d: "需要算 3×12−5，我可以调用计算器", type: "think", r: 0, label: "" },
+  { t: "工具调用 &lt;tool_call&gt;", d: 'calculator: "3*12-5"', type: "tool", r: 0.3, label: "R_tool +0.3" },
+  { t: "工具返回 &lt;tool_response&gt;", d: "31", type: "resp", r: 0, label: "" },
+  { t: "最终回答", d: "“还剩 31 颗。”", type: "ans", r: 1.0, label: "R_answer +1.0" },
+  { t: "格式检查", d: "标签闭合、JSON 合法", type: "fmt", r: 0.1, label: "R_format +0.1" },
+  { t: "完成度", d: "给出了最终答案，未中断", type: "fin", r: 0, label: "R_unfinished −0" },
+];
+const COLORS = { user: "#94a3b8", think: "#8b5cf6", tool: "#0ea5e9", resp: "#64748b", ans: "#10b981", fmt: "#f59e0b", fin: "#4f46e5" };
+
+function drawAgent(step) {
+  svg.innerHTML = "";
+  svgEl("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700, fill: "#1e293b" }, svg).textContent = "一条轨迹 τ（越往下越接近最终答案）";
+  const Y0 = 42, H = 36;
+  let total = 0;
+  TRAJ.forEach((s, i) => {
+    const y = Y0 + i * (H + 4);
+    const shown = i <= step;
+    const c = COLORS[s.type];
+    svgEl("rect", { x: 20, y, width: 420, height: H, rx: 8, fill: shown ? "#fff" : "#fafbff", stroke: shown ? c : "#e2e8f0", "stroke-width": i === step ? 2.6 : 1.4, opacity: shown ? 1 : .4 }, svg);
+    svgEl("rect", { x: 20, y, width: 5, height: H, rx: 2, fill: shown ? c : "#e2e8f0" }, svg);
+    svgEl("text", { x: 34, y: y + 15, "font-size": 11.5, "font-weight": 700, fill: shown ? c : "#cbd5e1" }, svg).textContent = s.t.replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+    svgEl("text", { x: 34, y: y + 29, "font-size": 10, fill: shown ? "#64748b" : "#cbd5e1" }, svg).textContent = s.d;
+    if (s.r !== 0 && shown) {
+      total += s.r;
+      svgEl("text", { x: 452, y: y + 22, "font-size": 11.5, "font-weight": 700, fill: s.r > 0 ? "#10b981" : "#e11d48" }, svg).textContent = s.label;
+    }
+  });
+  // 总奖励
+  const ty = Y0 + TRAJ.length * (H + 4) + 8;
+  svgEl("rect", { x: 20, y: ty, width: 420, height: 34, rx: 8, fill: "#eef2ff", stroke: "#4f46e5", "stroke-width": 1.8 }, svg);
+  svgEl("text", { x: 34, y: ty + 22, "font-size": 12.5, "font-weight": 700, fill: "#4f46e5" }, svg).textContent =
+    `R(τ) = R_answer + R_tool + R_format − R_unfinished = ${fx(total, 1)}`;
+  // 右侧策略更新说明
+  svgEl("rect", { x: 500, y: 60, width: 160, height: 120, rx: 10, fill: "#ecfdf5", stroke: "#10b981", "stroke-width": 1.6 }, svg);
+  svgEl("text", { x: 580, y: 84, "text-anchor": "middle", "font-size": 11.5, "font-weight": 700, fill: "#059669" }, svg).textContent = "策略更新";
+  svgEl("text", { x: 580, y: 108, "text-anchor": "middle", "font-size": 10.5, fill: "#047857" }, svg).textContent = "同题采样多条轨迹";
+  svgEl("text", { x: 580, y: 126, "text-anchor": "middle", "font-size": 10.5, fill: "#047857" }, svg).textContent = "组内归一化得优势";
+  svgEl("text", { x: 580, y: 144, "text-anchor": "middle", "font-size": 10.5, fill: "#047857" }, svg).textContent = "GRPO/CISPO 更新";
+  svgEl("text", { x: 580, y: 166, "text-anchor": "middle", "font-size": 10, fill: "#94a3b8" }, svg).textContent = "高奖励轨迹被强化";
+  if (step >= TRAJ.length - 1) {
+    svgEl("text", { x: 580, y: 210, "text-anchor": "middle", "font-size": 11, "fill": "#4f46e5", "font-weight": 700 }, svg).textContent = "✅ 轨迹完成，可结算";
+  }
+}
+const p = new Player(1.0);
+p.load(TRAJ.map((_, i) => i));
+p.onFrame = (i) => drawAgent(i);
+wireControls(p, { play: "play", prev: "prev", next: "next" });
+document.getElementById("reset").onclick = () => { p.pause(); p.i = 0; drawAgent(0); };
+drawAgent(0);
+</script>
+</body>
+</html>
