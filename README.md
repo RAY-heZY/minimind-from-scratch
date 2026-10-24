@@ -1,6 +1,6 @@
 # MiniMind 从零学习项目
 
-**🔗 在线看动画网页：<https://RAY-heZY.github.io/minimind-from-scratch/>**
+**🔗 在线看动画网页：<https://RAY-heZY.github.io/>**
 
 > 把 MiniMind 拆成 **15 个知识点**，每个知识点独立成章。
 > 每章 = **一个原理动画网页** + **一个引导式 Jupyter Notebook**。
