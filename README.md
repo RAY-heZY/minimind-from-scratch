@@ -74,7 +74,7 @@ uv run jupyter lab
 
 ### 在线访问
 
-网页已托管在 GitHub Pages：**https://RAY-heZY.github.io/minimind-from-scratch/**
+网页已托管在 GitHub Pages：**https://RAY-heZY.github.io/**
 
 > 每页右上角的「配套 Notebook ↗」会跳到 GitHub 上对应的 `.ipynb`，
 > 可以直接在线阅读（GitHub 能渲染 Notebook），或 clone 下来本地跑。
